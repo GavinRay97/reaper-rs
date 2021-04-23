@@ -219,6 +219,32 @@ impl Swell {
             (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
         }
     }
+
+    pub fn GetRValue(color: root::DWORD) -> u8 {
+        #[cfg(target_family = "unix")]
+        {
+            ((color >> 16) & 0xff) as _
+        }
+        #[cfg(target_family = "windows")]
+        {
+            (color & 0xff) as _
+        }
+    }
+
+    pub fn GetGValue(color: root::DWORD) -> u8 {
+        ((color >> 8) & 0xff) as _
+    }
+
+    pub fn GetBValue(color: root::DWORD) -> u8 {
+        #[cfg(target_family = "unix")]
+        {
+            (color & 0xff) as _
+        }
+        #[cfg(target_family = "windows")]
+        {
+            ((color >> 16) & 0xff) as _
+        }
+    }
 }
 
 /// This impl block contains functions which delegate to native win32 functions but need some
@@ -312,17 +338,29 @@ impl Swell {
         mi: *mut root::MENUITEMINFO,
     ) -> root::BOOL {
         let mi = *mi;
-        let mut utf16_string = utf8_to_16(mi.dwTypeData);
         let mut utf16_mi = utf8_to_16_menu_item_info(&mi);
-        utf16_mi.dwTypeData = utf16_string.as_mut_ptr();
-        let result = winapi::um::winuser::SetMenuItemInfoW(
-            hMenu as _,
-            pos as _,
-            byPos as _,
-            &utf16_mi as *const _,
-        );
-        std::mem::drop(utf16_string);
-        result as _
+        if menu_item_needs_string_conversion(mi) {
+            // Sets text. Must convert it.
+            let mut utf16_string = utf8_to_16(mi.dwTypeData);
+            utf16_mi.dwTypeData = utf16_string.as_mut_ptr();
+            let result = winapi::um::winuser::SetMenuItemInfoW(
+                hMenu as _,
+                pos as _,
+                byPos as _,
+                &utf16_mi as *const _,
+            );
+            std::mem::drop(utf16_string);
+            result as _
+        } else {
+            // Doesn't set text. No conversion necessary.
+            let result = winapi::um::winuser::SetMenuItemInfoW(
+                hMenu as _,
+                pos as _,
+                byPos as _,
+                &utf16_mi as *const _,
+            );
+            result as _
+        }
     }
 
     /// # Safety
@@ -336,16 +374,27 @@ impl Swell {
         mi: *mut root::MENUITEMINFO,
     ) {
         let mi = *mi;
-        let mut utf16_string = utf8_to_16(mi.dwTypeData);
         let mut utf16_mi = utf8_to_16_menu_item_info(&mi);
-        utf16_mi.dwTypeData = utf16_string.as_mut_ptr();
-        let result = winapi::um::winuser::InsertMenuItemW(
-            hMenu as _,
-            pos as _,
-            byPos as _,
-            &utf16_mi as *const _,
-        );
-        std::mem::drop(utf16_string);
+        if menu_item_needs_string_conversion(mi) {
+            // Sets text. Must convert it.
+            let mut utf16_string = utf8_to_16(mi.dwTypeData);
+            utf16_mi.dwTypeData = utf16_string.as_mut_ptr();
+            let result = winapi::um::winuser::InsertMenuItemW(
+                hMenu as _,
+                pos as _,
+                byPos as _,
+                &utf16_mi as *const _,
+            );
+            std::mem::drop(utf16_string);
+        } else {
+            // Doesn't set text. No conversion necessary.
+            let result = winapi::um::winuser::InsertMenuItemW(
+                hMenu as _,
+                pos as _,
+                byPos as _,
+                &utf16_mi as *const _,
+            );
+        }
     }
 
     /// **Attention:** This doesn't yet support `dwTypeData` (always `null` currently).
@@ -489,4 +538,12 @@ fn utf8_to_16_menu_item_info(mi: &root::MENUITEMINFO) -> winapi::um::winuser::ME
         cch: mi.cch as _,
         hbmpItem: mi.hbmpItem as _,
     }
+}
+
+#[cfg(target_family = "windows")]
+fn menu_item_needs_string_conversion(mi: root::MENUITEMINFO) -> bool {
+    // Super important to use `raw` constants here because the SWELL constant values deviate
+    // from the Windows constants!!!
+    use crate::raw;
+    (mi.fMask & raw::MIIM_TYPE) != 0 && (mi.fMask & raw::MIIM_DATA) != 0
 }

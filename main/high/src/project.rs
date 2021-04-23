@@ -1,17 +1,24 @@
 use crate::guid::Guid;
-use crate::{PlayRate, Reaper, Tempo, Track};
+use crate::{
+    BasicBookmarkInfo, BookmarkType, IndexBasedBookmark, Item, PlayRate, Reaper, Tempo, Track,
+};
 
 use reaper_medium::ProjectContext::{CurrentProject, Proj};
 use reaper_medium::{
-    MasterTrackBehavior, PlayState, ProjectRef, ReaProject, ReaperString, ReaperStringArg,
-    TrackDefaultsBehavior, TrackLocation, UndoBehavior,
+    AutoSeekBehavior, BookmarkId, BookmarkRef, CountProjectMarkersResult, DurationInSeconds,
+    GetLastMarkerAndCurRegionResult, GetLoopTimeRange2Result, MasterTrackBehavior, PlayState,
+    PositionInSeconds, ProjectContext, ProjectRef, ReaProject, ReaperString, ReaperStringArg,
+    SetEditCurPosOptions, TimeMap2TimeToBeatsResult, TimeRangeType, TrackDefaultsBehavior,
+    TrackLocation, UndoBehavior,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Project {
     rea_project: ReaProject,
 }
+
+const MAX_PATH_LENGTH: u32 = 5000;
 
 // The pointer will never be dereferenced, so we can safely make it Send and Sync.
 unsafe impl Send for Project {}
@@ -30,10 +37,10 @@ impl Project {
         self.track_by_index(0)
     }
 
-    pub fn file_path(self) -> Option<PathBuf> {
+    pub fn file(self) -> Option<PathBuf> {
         Reaper::get()
             .medium_reaper()
-            .enum_projects(ProjectRef::Tab(self.index()), 5000)
+            .enum_projects(ProjectRef::Tab(self.index()), MAX_PATH_LENGTH)
             .unwrap()
             .file_path
     }
@@ -77,7 +84,7 @@ impl Project {
         Track::from_guid(self, *guid)
     }
 
-    pub fn tracks(self) -> impl Iterator<Item = Track> + 'static {
+    pub fn tracks(self) -> impl Iterator<Item = Track> + ExactSizeIterator + 'static {
         self.complain_if_not_available();
         (0..self.track_count()).map(move |i| {
             let media_track = Reaper::get()
@@ -109,6 +116,13 @@ impl Project {
         Some(Track::new(media_track, Some(self.rea_project)))
     }
 
+    pub fn first_selected_item(self) -> Option<Item> {
+        let raw_item = Reaper::get()
+            .medium_reaper()
+            .get_selected_media_item(self.context(), 0)?;
+        Some(Item::new(raw_item))
+    }
+
     pub fn unselect_all_tracks(self) {
         // TODO-low No project context
         unsafe {
@@ -128,6 +142,10 @@ impl Project {
                 .unwrap();
             Track::new(media_track, Some(self.rea_project))
         })
+    }
+
+    pub fn context(self) -> ProjectContext {
+        Proj(self.rea_project)
     }
 
     pub fn track_count(self) -> u32 {
@@ -224,8 +242,14 @@ impl Project {
     }
 
     pub fn tempo(self) -> Tempo {
-        // TODO This is not project-specific ... why?
-        let bpm = Reaper::get().medium_reaper().master_get_tempo();
+        let bpm = if self == Reaper::get().current_project() {
+            Reaper::get().medium_reaper().master_get_tempo()
+        } else {
+            // ReaLearn #283
+            Reaper::get()
+                .medium_reaper()
+                .time_map_2_get_divided_bpm_at_time(self.context(), PositionInSeconds::new(0.0))
+        };
         Tempo::from_bpm(bpm)
     }
 
@@ -310,10 +334,223 @@ impl Project {
             .get_play_state_ex(Proj(self.rea_project))
     }
 
+    pub fn find_bookmark_by_type_and_index(
+        self,
+        bookmark_type: BookmarkType,
+        index: u32,
+    ) -> Option<FindBookmarkResult> {
+        self.bookmarks_of_type(bookmark_type)
+            .find(|res| res.index_within_type == index)
+    }
+
+    pub fn find_bookmark_by_type_and_id(
+        self,
+        bookmark_type: BookmarkType,
+        id: BookmarkId,
+    ) -> Option<FindBookmarkResult> {
+        self.bookmarks_of_type(bookmark_type)
+            .find(|res| res.basic_info.id == id)
+    }
+
+    pub fn directory(self) -> Option<PathBuf> {
+        let file = self.file()?;
+        let dir = file.parent()?;
+        Some(dir.to_owned())
+    }
+
+    pub fn make_path_relative(self, path: &Path) -> Option<PathBuf> {
+        let dir = self.directory()?;
+        pathdiff::diff_paths(path, dir)
+    }
+
+    pub fn make_path_relative_if_in_project_directory(self, path: &Path) -> Option<PathBuf> {
+        let dir = self.directory()?;
+        if path.starts_with(&dir) {
+            pathdiff::diff_paths(path, dir)
+        } else {
+            Some(path.to_owned())
+        }
+    }
+
+    pub fn recording_path(self) -> PathBuf {
+        Reaper::get()
+            .medium_reaper
+            .get_project_path_ex(self.context(), MAX_PATH_LENGTH)
+    }
+
+    pub fn make_path_absolute(self, path: &Path) -> Option<PathBuf> {
+        if path.is_relative() {
+            let dir = self.directory()?;
+            Some(dir.join(path))
+        } else {
+            Some(path.to_owned())
+        }
+    }
+
+    fn bookmarks_of_type(
+        self,
+        bookmark_type: BookmarkType,
+    ) -> impl Iterator<Item = FindBookmarkResult> {
+        self.bookmarks()
+            // Enumerate across types
+            .enumerate()
+            .map(|(i, b)| {
+                FindBookmarkResult {
+                    index: i as _,
+                    // Not yet set
+                    index_within_type: 0,
+                    bookmark: b,
+                    basic_info: b.basic_info(),
+                }
+            })
+            .filter(move |res| res.basic_info.bookmark_type() == bookmark_type)
+            // Enumerate within this type
+            .enumerate()
+            .map(|(i, mut res)| {
+                res.index_within_type = i as _;
+                res
+            })
+    }
+
+    // If we make this clean one day, I think this a good way: When wandering from the project to
+    // a bookmark, we *should* return an Option if it doesn't exist. If one wants to create a
+    // IndexBasedBookmark value - irrelevant of it exists or not - they can just create it
+    // directly. That's good because it allows for a fluent, idiomatic API. The methods of the
+    // returned object should not return an error if the object is not available - they should
+    // panic instead because at this point (the fluent API use) we can safely assume they *are*
+    // available - because it was checked in the find() call before. Long-living objects whose
+    // methods return results depending on their availability are maybe not a good idea!
+    //
+    // The returned bookmark should provide methods to dive further in a fluent way (doing
+    // REAPER function calls as necessary). It shouldn't contain any snapshot data.
+    // There's the related question how to deal with info that is discovered already while
+    // finding the bookmark. It's a snapshot only, so it should *not* be part of the actually
+    // returned bookmark. But it could be returned as side product.
+    pub fn find_bookmark_by_index(self, index: u32) -> Option<IndexBasedBookmark> {
+        if index >= self.bookmark_count().total_count {
+            return None;
+        }
+        Some(IndexBasedBookmark::new(self, index))
+    }
+
+    pub fn bookmarks(self) -> impl Iterator<Item = IndexBasedBookmark> + ExactSizeIterator {
+        (0..self.bookmark_count().total_count).map(move |i| IndexBasedBookmark::new(self, i))
+    }
+
+    pub fn bookmark_count(self) -> CountProjectMarkersResult {
+        Reaper::get()
+            .medium_reaper()
+            .count_project_markers(self.context())
+    }
+
+    pub fn go_to_marker(self, marker: BookmarkRef) {
+        Reaper::get()
+            .medium_reaper()
+            .go_to_marker(self.context(), marker);
+    }
+
+    pub fn go_to_region_with_smooth_seek(self, region: BookmarkRef) {
+        Reaper::get()
+            .medium_reaper()
+            .go_to_region(self.context(), region);
+    }
+
+    pub fn current_bookmark_at(self, pos: PositionInSeconds) -> GetLastMarkerAndCurRegionResult {
+        Reaper::get()
+            .medium_reaper()
+            .get_last_marker_and_cur_region(self.context(), pos)
+    }
+
+    pub fn current_bookmark(self) -> GetLastMarkerAndCurRegionResult {
+        let reference_pos = self.play_or_edit_cursor_position();
+        self.current_bookmark_at(reference_pos)
+    }
+
+    pub fn play_or_edit_cursor_position(self) -> PositionInSeconds {
+        if self.is_playing() {
+            self.play_position_latency_compensated()
+        } else {
+            self.edit_cursor_position()
+        }
+    }
+
+    pub fn beat_info_at(self, tpos: PositionInSeconds) -> TimeMap2TimeToBeatsResult {
+        Reaper::get()
+            .medium_reaper
+            .time_map_2_time_to_beats(self.context(), tpos)
+    }
+
+    pub fn play_position_next_audio_block(self) -> PositionInSeconds {
+        Reaper::get()
+            .medium_reaper()
+            .get_play_position_2_ex(self.context())
+    }
+
+    pub fn play_position_latency_compensated(self) -> PositionInSeconds {
+        Reaper::get()
+            .medium_reaper()
+            .get_play_position_ex(self.context())
+    }
+
+    pub fn edit_cursor_position(self) -> PositionInSeconds {
+        Reaper::get()
+            .medium_reaper()
+            .get_cursor_position_ex(self.context())
+    }
+
+    pub fn time_selection(self) -> Option<GetLoopTimeRange2Result> {
+        Reaper::get()
+            .medium_reaper
+            .get_set_loop_time_range_2_get(self.context(), TimeRangeType::TimeSelection)
+    }
+
+    pub fn loop_points(self) -> Option<GetLoopTimeRange2Result> {
+        Reaper::get()
+            .medium_reaper
+            .get_set_loop_time_range_2_get(self.context(), TimeRangeType::LoopPoints)
+    }
+
+    pub fn set_time_selection(self, start: PositionInSeconds, end: PositionInSeconds) {
+        Reaper::get().medium_reaper.get_set_loop_time_range_2_set(
+            self.context(),
+            TimeRangeType::TimeSelection,
+            start,
+            end,
+            AutoSeekBehavior::DenyAutoSeek,
+        );
+    }
+
+    pub fn set_loop_points(
+        self,
+        start: PositionInSeconds,
+        end: PositionInSeconds,
+        auto_seek_behavior: AutoSeekBehavior,
+    ) {
+        Reaper::get().medium_reaper.get_set_loop_time_range_2_set(
+            self.context(),
+            TimeRangeType::LoopPoints,
+            start,
+            end,
+            auto_seek_behavior,
+        );
+    }
+
+    pub fn length(self) -> DurationInSeconds {
+        Reaper::get()
+            .medium_reaper
+            .get_project_length(self.context())
+    }
+
+    pub fn set_edit_cursor_position(self, time: PositionInSeconds, options: SetEditCurPosOptions) {
+        Reaper::get()
+            .medium_reaper
+            .set_edit_curs_pos_2(self.context(), time, options);
+    }
+
     fn set_repeat_is_enabled(self, repeat: bool) {
         Reaper::get()
             .medium_reaper()
-            .get_set_repeat_ex_set(Proj(self.rea_project), repeat);
+            .get_set_repeat_ex_set(self.context(), repeat);
     }
 
     fn complain_if_not_available(self) {
@@ -321,4 +558,11 @@ impl Project {
             panic!("Project not available");
         }
     }
+}
+
+pub struct FindBookmarkResult {
+    pub index: u32,
+    pub index_within_type: u32,
+    pub bookmark: IndexBasedBookmark,
+    pub basic_info: BasicBookmarkInfo,
 }

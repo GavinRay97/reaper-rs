@@ -5,6 +5,7 @@ use derive_more::*;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::convert::TryFrom;
+use std::fmt::{Display, Formatter};
 
 /// A command ID.
 ///
@@ -94,6 +95,53 @@ impl SectionId {
     /// Creates a section ID.
     pub fn new(number: u32) -> SectionId {
         SectionId(number)
+    }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Converts this value to an integer as expected by the low-level API.
+    pub fn to_raw(self) -> i32 {
+        self.0 as i32
+    }
+}
+
+/// A marker or region ID.
+///
+/// This uniquely identifies a marker or region. Zero is also a valid ID.
+/// Region IDs and marker IDs are two separate ID spaces.
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Display)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BookmarkId(pub(crate) u32);
+
+impl BookmarkId {
+    /// Creates a marker ID.
+    pub fn new(number: u32) -> BookmarkId {
+        BookmarkId(number)
+    }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Converts this value to an integer as expected by the low-level API.
+    pub fn to_raw(self) -> i32 {
+        self.0 as i32
+    }
+}
+
+/// An OS-dependent color.
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Display)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct NativeColor(pub(crate) u32);
+
+impl NativeColor {
+    /// Creates a native color.
+    pub fn new(number: u32) -> NativeColor {
+        NativeColor(number)
     }
 
     /// Returns the wrapped value.
@@ -459,6 +507,233 @@ impl TryFrom<f64> for Hz {
     }
 }
 
+/// This represents a position expressed as amount of seconds.
+///
+/// Sometimes this is a negative number, e.g. when it's a position on the timeline and a metronome
+/// count-in is used or at the very beginning of the project (maybe because of rounding). Negative
+/// project start values don't seem to cause negative position values though.
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Default, Display)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(try_from = "f64")
+)]
+pub struct PositionInSeconds(pub(crate) f64);
+
+impl PositionInSeconds {
+    fn is_valid(value: f64) -> bool {
+        !value.is_infinite() && !value.is_nan()
+    }
+
+    /// Creates a value.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the given value is a special number.
+    pub fn new(value: f64) -> PositionInSeconds {
+        assert!(
+            Self::is_valid(value),
+            format!("{} is not a valid PositionInSeconds value", value)
+        );
+        PositionInSeconds(value)
+    }
+
+    /// Creates a PositionInSeconds value without bound checking.
+    ///
+    /// # Safety
+    ///
+    /// You must ensure that the given value is a non-special number.
+    pub unsafe fn new_unchecked(value: f64) -> PositionInSeconds {
+        PositionInSeconds(value)
+    }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+impl TryFrom<f64> for PositionInSeconds {
+    type Error = TryFromGreaterError<f64>;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        if !Self::is_valid(value) {
+            return Err(TryFromGreaterError::new(
+                "PositionInSeconds value must be non-special",
+                value,
+            ));
+        }
+        Ok(PositionInSeconds(value))
+    }
+}
+
+/// This represents a duration expressed as positive amount of seconds.
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Default, Display)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(try_from = "f64")
+)]
+pub struct DurationInSeconds(pub(crate) f64);
+
+impl DurationInSeconds {
+    fn is_valid(value: f64) -> bool {
+        value >= 0.0 && !value.is_infinite() && !value.is_nan()
+    }
+
+    /// Creates a value.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the given value is negative or a special number.
+    pub fn new(value: f64) -> DurationInSeconds {
+        assert!(
+            Self::is_valid(value),
+            format!("{} is not a valid DurationInSeconds value", value)
+        );
+        DurationInSeconds(value)
+    }
+
+    /// Creates a DurationInSeconds value without bound checking.
+    ///
+    /// # Safety
+    ///
+    /// You must ensure that the given value is positive.
+    pub unsafe fn new_unchecked(value: f64) -> DurationInSeconds {
+        DurationInSeconds(value)
+    }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+impl TryFrom<f64> for DurationInSeconds {
+    type Error = TryFromGreaterError<f64>;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        if !Self::is_valid(value) {
+            return Err(TryFromGreaterError::new(
+                "DurationInSeconds value must be positive",
+                value,
+            ));
+        }
+        Ok(DurationInSeconds(value))
+    }
+}
+
+/// This represents a duration expressed as positive amount of beats.
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Default, Display)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(try_from = "f64")
+)]
+pub struct DurationInBeats(pub(crate) f64);
+
+impl DurationInBeats {
+    fn is_valid(value: f64) -> bool {
+        value >= 0.0 && !value.is_infinite() && !value.is_nan()
+    }
+
+    /// Creates a value.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the given value is negative or a special number.
+    pub fn new(value: f64) -> DurationInBeats {
+        assert!(
+            Self::is_valid(value),
+            format!("{} is not a valid DurationInBeats value", value)
+        );
+        DurationInBeats(value)
+    }
+
+    /// Creates a DurationInBeats value without bound checking.
+    ///
+    /// # Safety
+    ///
+    /// You must ensure that the given value is positive.
+    pub unsafe fn new_unchecked(value: f64) -> DurationInBeats {
+        DurationInBeats(value)
+    }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+impl TryFrom<f64> for DurationInBeats {
+    type Error = TryFromGreaterError<f64>;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        if !Self::is_valid(value) {
+            return Err(TryFromGreaterError::new(
+                "DurationInBeats value must be positive",
+                value,
+            ));
+        }
+        Ok(DurationInBeats(value))
+    }
+}
+
+/// This represents a position expressed as an amount of beats.
+///
+/// Can be negative, see [`PositionInSeconds`](struct.PositionInSeconds.html).
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Default, Display)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(try_from = "f64")
+)]
+pub struct PositionInBeats(pub(crate) f64);
+
+impl PositionInBeats {
+    fn is_valid(value: f64) -> bool {
+        !value.is_infinite() && !value.is_nan()
+    }
+
+    /// Creates a value.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the given value is a special number.
+    pub fn new(value: f64) -> PositionInBeats {
+        assert!(
+            Self::is_valid(value),
+            format!("{} is not a valid PositionInBeats value", value)
+        );
+        PositionInBeats(value)
+    }
+
+    /// Creates a PositionInBeats value without bound checking.
+    ///
+    /// # Safety
+    ///
+    /// You must ensure that the given value is not a special number.
+    pub unsafe fn new_unchecked(value: f64) -> PositionInBeats {
+        PositionInBeats(value)
+    }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+impl TryFrom<f64> for PositionInBeats {
+    type Error = TryFromGreaterError<f64>;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        if !Self::is_valid(value) {
+            return Err(TryFromGreaterError::new("value must be non-special", value));
+        }
+        Ok(PositionInBeats(value))
+    }
+}
+
 /// This represents a volume measured in decibel.
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Default, Display)]
 #[cfg_attr(
@@ -697,6 +972,7 @@ impl From<ReaperVolumeValue> for f64 {
     derive(Serialize, Deserialize),
     serde(try_from = "f64")
 )]
+#[repr(transparent)]
 pub struct ReaperPanValue(pub(crate) f64);
 
 impl ReaperPanValue {
@@ -765,6 +1041,140 @@ impl From<ReaperPanValue> for f64 {
     }
 }
 
+/// This represents a width measured in REAPER's native width unit.
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Default, Display)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(try_from = "f64")
+)]
+#[repr(transparent)]
+pub struct ReaperWidthValue(pub(crate) f64);
+
+impl ReaperWidthValue {
+    /// The minimum possible value (-1.0).
+    pub const MIN: ReaperWidthValue = ReaperWidthValue(-1.0);
+
+    /// The center value (0.0).
+    pub const CENTER: ReaperWidthValue = ReaperWidthValue(0.0);
+
+    /// The maximum possible value (1.0).
+    pub const MAX: ReaperWidthValue = ReaperWidthValue(1.0);
+
+    fn is_valid(value: f64) -> bool {
+        ReaperWidthValue::MIN.get() <= value && value <= ReaperWidthValue::MAX.get()
+    }
+
+    /// Creates a width value.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the given value is not within the range supported by REAPER
+    /// `(-1.0..=1.0)`.
+    pub fn new(value: f64) -> ReaperWidthValue {
+        assert!(
+            Self::is_valid(value),
+            format!("{} is not a valid ReaperWidthValue", value)
+        );
+        ReaperWidthValue(value)
+    }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+impl TryFrom<f64> for ReaperWidthValue {
+    type Error = TryFromGreaterError<f64>;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        if !Self::is_valid(value) {
+            return Err(TryFromGreaterError::new(
+                "value must be between -1.0 and 1.0",
+                value,
+            ));
+        }
+        Ok(ReaperWidthValue(value))
+    }
+}
+
+/// For being able to use it with `ValueChange`.
+#[doc(hidden)]
+impl From<ReaperWidthValue> for f64 {
+    fn from(v: ReaperWidthValue) -> Self {
+        v.0
+    }
+}
+
+/// This represents a value that could either be a pan or a width value.
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Default, Display)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(try_from = "f64")
+)]
+#[repr(transparent)]
+pub struct ReaperPanLikeValue(pub(crate) f64);
+
+impl ReaperPanLikeValue {
+    /// The minimum possible value (-1.0).
+    pub const MIN: ReaperPanLikeValue = ReaperPanLikeValue(-1.0);
+
+    /// The center value (0.0).
+    pub const CENTER: ReaperPanLikeValue = ReaperPanLikeValue(0.0);
+
+    /// The maximum possible value (1.0).
+    pub const MAX: ReaperPanLikeValue = ReaperPanLikeValue(1.0);
+
+    fn is_valid(value: f64) -> bool {
+        ReaperPanLikeValue::MIN.get() <= value && value <= ReaperPanLikeValue::MAX.get()
+    }
+
+    /// Creates a pan-like value.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the given value is not within the range supported by REAPER
+    /// `(-1.0..=1.0)`.
+    pub fn new(value: f64) -> ReaperPanLikeValue {
+        assert!(
+            Self::is_valid(value),
+            format!("{} is not a valid ReaperPanLikeValue", value)
+        );
+        ReaperPanLikeValue(value)
+    }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+
+    /// Converts this into a pan value.
+    pub fn as_pan_value(self) -> ReaperPanValue {
+        ReaperPanValue(self.0)
+    }
+
+    /// Converts this into a width value.
+    pub fn as_width_value(self) -> ReaperWidthValue {
+        ReaperWidthValue(self.0)
+    }
+}
+
+impl TryFrom<f64> for ReaperPanLikeValue {
+    type Error = TryFromGreaterError<f64>;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        if !Self::is_valid(value) {
+            return Err(TryFromGreaterError::new(
+                "value must be between -1.0 and 1.0",
+                value,
+            ));
+        }
+        Ok(ReaperPanLikeValue(value))
+    }
+}
+
 /// Represents a particular version of REAPER.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub struct ReaperVersion<'a>(Cow<'a, ReaperStr>);
@@ -778,6 +1188,12 @@ impl<'a> ReaperVersion<'a> {
     /// Consumes this version and spits out the contained cow.
     pub fn into_inner(self) -> Cow<'a, ReaperStr> {
         self.0
+    }
+}
+
+impl<'a> Display for ReaperVersion<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.to_str())
     }
 }
 
@@ -804,3 +1220,10 @@ impl MidiFrameOffset {
         self.0 as i32
     }
 }
+
+/// Represents a value which can neither be accessed nor created by the consumer.
+///
+/// It's mainly used inside `Unknown` variants in order to enable forward compatibility without
+/// information loss.
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
+pub struct Hidden<T>(pub(crate) T);

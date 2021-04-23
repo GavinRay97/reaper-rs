@@ -40,12 +40,17 @@ pub struct MeterMiddlewareMetrics {
     ext_set_fx_enabled: CustomResponseTime,
     ext_set_send_volume: CustomResponseTime,
     ext_set_send_pan: CustomResponseTime,
+    ext_set_recv_volume: CustomResponseTime,
+    ext_set_recv_pan: CustomResponseTime,
+    ext_set_pan_ex: CustomResponseTime,
     ext_set_focused_fx: CustomResponseTime,
     ext_set_last_touched_fx: CustomResponseTime,
     ext_set_fx_open: CustomResponseTime,
     ext_set_fx_change: CustomResponseTime,
     ext_set_bpm_and_play_rate: CustomResponseTime,
     ext_track_fx_preset_changed: CustomResponseTime,
+    ext_reset: CustomResponseTime,
+    ext_set_project_marker_change: CustomResponseTime,
 }
 
 impl MeterMiddlewareMetrics {
@@ -141,6 +146,17 @@ impl MeterMiddlewareMetrics {
                 is_critical_default,
             ),
             MetricDescriptor::new(
+                "ext_set_recv_volume",
+                |m| &m.ext_set_recv_volume,
+                is_critical_default,
+            ),
+            MetricDescriptor::new(
+                "ext_set_recv_pan",
+                |m| &m.ext_set_recv_pan,
+                is_critical_default,
+            ),
+            MetricDescriptor::new("ext_set_pan_ex", |m| &m.ext_set_pan_ex, is_critical_default),
+            MetricDescriptor::new(
                 "ext_set_focused_fx",
                 |m| &m.ext_set_focused_fx,
                 is_critical_default,
@@ -170,6 +186,12 @@ impl MeterMiddlewareMetrics {
                 |m| &m.ext_track_fx_preset_changed,
                 is_critical_default,
             ),
+            MetricDescriptor::new("ext_reset", |m| &m.ext_reset, is_critical_default),
+            MetricDescriptor::new(
+                "ext_set_project_marker_change",
+                |m| &m.ext_set_project_marker_change,
+                is_critical_default,
+            ),
         ]
     }
 }
@@ -197,7 +219,7 @@ impl MeterMiddleware {
         self.metrics.run.record(elapsed);
     }
 
-    pub fn record_event(&self, event: ControlSurfaceEvent, elapsed: u64) {
+    pub fn record_event(&self, event: ControlSurfaceEvent, elapsed: u64) -> bool {
         use ControlSurfaceEvent::*;
         let response_time = match event {
             CloseNoReset => &self.metrics.close_no_reset,
@@ -220,14 +242,20 @@ impl MeterMiddleware {
             ExtSetFxEnabled(_) => &self.metrics.ext_set_fx_enabled,
             ExtSetSendVolume(_) => &self.metrics.ext_set_send_volume,
             ExtSetSendPan(_) => &self.metrics.ext_set_send_pan,
+            ExtSetRecvVolume(_) => &self.metrics.ext_set_recv_volume,
+            ExtSetRecvPan(_) => &self.metrics.ext_set_recv_pan,
             ExtSetFocusedFx(_) => &self.metrics.ext_set_focused_fx,
             ExtSetLastTouchedFx(_) => &self.metrics.ext_set_last_touched_fx,
             ExtSetFxOpen(_) => &self.metrics.ext_set_fx_open,
             ExtSetFxChange(_) => &self.metrics.ext_set_fx_change,
             ExtSetBpmAndPlayRate(_) => &self.metrics.ext_set_bpm_and_play_rate,
             ExtTrackFxPresetChanged(_) => &self.metrics.ext_track_fx_preset_changed,
+            ExtSetPanExt(_) => &self.metrics.ext_set_pan_ex,
+            ExtReset(_) => &self.metrics.ext_reset,
+            ExtSetProjectMarkerChange(_) => &self.metrics.ext_set_project_marker_change,
         };
         response_time.record(elapsed);
+        true
     }
 
     pub fn warn_about_critical_metrics(&self) {
@@ -299,7 +327,7 @@ impl<R, M> MetricDescriptor<R, M> {
     }
 }
 
-type ControlSurfaceResponseTimeDescriptors = [ResponseTimeDescriptor<MeterMiddlewareMetrics>; 27];
+type ControlSurfaceResponseTimeDescriptors = [ResponseTimeDescriptor<MeterMiddlewareMetrics>; 32];
 
 fn is_critical_default(response_time: &CustomResponseTime) -> bool {
     response_time.borrow().max() > 10000

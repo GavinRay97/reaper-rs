@@ -10,6 +10,26 @@
 pub mod root {
     #[allow(unused_imports)]
     use self::super::root;
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct preview_register_t {
+        #[cfg(unix)]
+        pub mutex: libc::pthread_mutex_t,
+        #[cfg(windows)]
+        pub cs: winapi::um::minwinbase::CRITICAL_SECTION,
+        pub src: *mut root::PCM_source,
+        pub m_out_chan: ::std::os::raw::c_int,
+        pub curpos: f64,
+        pub loop_: bool,
+        pub volume: f64,
+        pub peakvol: [f64; 2usize],
+        pub preview_track: *mut ::std::os::raw::c_void,
+    }
+    impl Default for preview_register_t {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     pub const DLL_PROCESS_DETACH: u32 = 0;
     pub const DLL_PROCESS_ATTACH: u32 = 1;
     pub const MB_OK: u32 = 0;
@@ -312,6 +332,55 @@ pub mod root {
     pub const GMEM_SHARE: u32 = 0;
     pub const GMEM_LOWER: u32 = 0;
     pub const REAPER_PLUGIN_VERSION: i32 = 526;
+    pub const PCM_SOURCE_EXT_INLINEEDITOR: u32 = 256;
+    pub const PCM_SOURCE_EXT_PROJCHANGENOTIFY: u32 = 8192;
+    pub const PCM_SOURCE_EXT_OPENEDITOR: u32 = 65537;
+    pub const PCM_SOURCE_EXT_GETEDITORSTRING: u32 = 65538;
+    pub const PCM_SOURCE_EXT_DEPRECATED_1: u32 = 65539;
+    pub const PCM_SOURCE_EXT_SETITEMCONTEXT: u32 = 65540;
+    pub const PCM_SOURCE_EXT_ADDMIDIEVENTS: u32 = 65541;
+    pub const PCM_SOURCE_EXT_GETASSOCIATED_RPP: u32 = 65542;
+    pub const PCM_SOURCE_EXT_GETMETADATA: u32 = 65543;
+    pub const PCM_SOURCE_EXT_SETASSECONDARYSOURCE: u32 = 65544;
+    pub const PCM_SOURCE_EXT_SHOWMIDIPREVIEW: u32 = 65545;
+    pub const PCM_SOURCE_EXT_SEND_EDITOR_MSG: u32 = 65546;
+    pub const PCM_SOURCE_EXT_SETSECONDARYSOURCELIST: u32 = 65547;
+    pub const PCM_SOURCE_EXT_ISOPENEDITOR: u32 = 65548;
+    pub const PCM_SOURCE_EXT_GETITEMCONTEXT: u32 = 65552;
+    pub const PCM_SOURCE_EXT_CONFIGISFILENAME: u32 = 131072;
+    pub const PCM_SOURCE_EXT_GETBPMANDINFO: u32 = 262144;
+    pub const PCM_SOURCE_EXT_GETNTRACKS: u32 = 524288;
+    pub const PCM_SOURCE_EXT_GETTITLE: u32 = 524289;
+    pub const PCM_SOURCE_EXT_GETTEMPOMAP: u32 = 524290;
+    pub const PCM_SOURCE_EXT_WANTOLDBEATSTYLE: u32 = 524291;
+    pub const PCM_SOURCE_EXT_WANTTRIM: u32 = 589826;
+    pub const PCM_SOURCE_EXT_TRIMITEM: u32 = 589827;
+    pub const PCM_SOURCE_EXT_EXPORTTOFILE: u32 = 589828;
+    pub const PCM_SOURCE_EXT_ENUMCUES: u32 = 589829;
+    pub const PCM_SOURCE_EXT_ENUMCUES_EX: u32 = 589846;
+    pub const PCM_SOURCE_EXT_ENUMSLICES: u32 = 589830;
+    pub const PCM_SOURCE_EXT_ENDPLAYNOTIFY: u32 = 589831;
+    pub const PCM_SOURCE_EXT_SETPREVIEWTEMPO: u32 = 589832;
+    pub const PCM_SOURCE_EXT_GETRAWMIDIEVENTS: u32 = 589833;
+    pub const PCM_SOURCE_EXT_SETRESAMPLEMODE: u32 = 589834;
+    pub const PCM_SOURCE_EXT_NOTIFYPREVIEWPLAYPOS: u32 = 589835;
+    pub const PCM_SOURCE_EXT_SETSIZE: u32 = 589836;
+    pub const PCM_SOURCE_EXT_GETSOURCETEMPO: u32 = 589837;
+    pub const PCM_SOURCE_EXT_ISABNORMALAUDIO: u32 = 589838;
+    pub const PCM_SOURCE_EXT_GETPOOLEDMIDIID: u32 = 589839;
+    pub const PCM_SOURCE_EXT_REMOVEFROMMIDIPOOL: u32 = 589840;
+    pub const PCM_SOURCE_EXT_GETMIDIDATAHASH: u32 = 589841;
+    pub const PCM_SOURCE_EXT_GETIMAGE: u32 = 589842;
+    pub const PCM_SOURCE_EXT_NOAUDIO: u32 = 589843;
+    pub const PCM_SOURCE_EXT_HASMIDI: u32 = 589844;
+    pub const PCM_SOURCE_EXT_DELETEMIDINOTES: u32 = 589845;
+    pub const PCM_SOURCE_EXT_GETGUID: u32 = 589847;
+    pub const PCM_SOURCE_EXT_DOPASTEINITEM: u32 = 590080;
+    pub const PCM_SOURCE_EXT_GETNOTERANGE: u32 = 589848;
+    pub const PCM_SOURCE_EXT_PPQCONVERT: u32 = 589856;
+    pub const PCM_SOURCE_EXT_COUNTMIDIEVTS: u32 = 589857;
+    pub const PCM_SOURCE_EXT_GETSETMIDIEVT: u32 = 589858;
+    pub const PCM_SOURCE_EXT_GETSUGGESTEDTEXT: u32 = 589859;
     pub const CSURF_EXT_RESET: i32 = 131071;
     pub const CSURF_EXT_SETINPUTMONITOR: i32 = 65537;
     pub const CSURF_EXT_SETMETRONOME: i32 = 65538;
@@ -349,6 +418,11 @@ pub mod root {
         pub __prev: *mut root::__pthread_internal_list,
         pub __next: *mut root::__pthread_internal_list,
     }
+    impl Default for __pthread_internal_list {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     pub type __pthread_list_t = root::__pthread_internal_list;
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -362,6 +436,11 @@ pub mod root {
         pub __elision: ::std::os::raw::c_short,
         pub __list: root::__pthread_list_t,
     }
+    impl Default for __pthread_mutex_s {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     #[derive(Copy, Clone)]
     pub union pthread_mutex_t {
@@ -369,6 +448,11 @@ pub mod root {
         pub __size: [::std::os::raw::c_char; 40usize],
         pub __align: ::std::os::raw::c_long,
         _bindgen_union_align: [u64; 5usize],
+    }
+    impl Default for pthread_mutex_t {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     pub mod std {
         #[allow(unused_imports)]
@@ -422,20 +506,20 @@ pub mod root {
         ),
     >;
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct POINT {
         pub x: root::LONG,
         pub y: root::LONG,
     }
     pub type LPPOINT = *mut root::POINT;
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct POINTS {
         pub x: root::SHORT,
         pub y: root::SHORT,
     }
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct RECT {
         pub left: root::LONG,
         pub top: root::LONG,
@@ -444,20 +528,20 @@ pub mod root {
     }
     pub type LPRECT = *mut root::RECT;
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct ACCEL {
         pub fVirt: ::std::os::raw::c_uchar,
         pub key: ::std::os::raw::c_ushort,
         pub cmd: ::std::os::raw::c_ushort,
     }
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct FILETIME {
         pub dwLowDateTime: root::DWORD,
         pub dwHighDateTime: root::DWORD,
     }
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct _GUID {
         pub Data1: ::std::os::raw::c_uint,
         pub Data2: ::std::os::raw::c_ushort,
@@ -474,6 +558,11 @@ pub mod root {
         pub lParam: root::LPARAM,
         pub time: root::DWORD,
         pub pt: root::POINT,
+    }
+    impl Default for MSG {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     #[derive(Debug, Copy, Clone)]
@@ -508,6 +597,11 @@ pub mod root {
         pub cchTextMax: ::std::os::raw::c_int,
         pub iSubItem: ::std::os::raw::c_int,
     }
+    impl Default for LVCOLUMN {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct LVITEM {
@@ -520,6 +614,11 @@ pub mod root {
         pub cchTextMax: ::std::os::raw::c_int,
         pub iImage: ::std::os::raw::c_int,
         pub lParam: root::LPARAM,
+    }
+    impl Default for LVITEM {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     pub type PFNLVCOMPARE = ::std::option::Option<
         unsafe extern "C" fn(
@@ -535,7 +634,7 @@ pub mod root {
     }
     pub type HIMAGELIST = *mut root::HIMAGELIST__;
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct LVHITTESTINFO {
         pub pt: root::POINT,
         pub flags: root::UINT,
@@ -558,6 +657,11 @@ pub mod root {
         pub pvFilter: *mut ::std::os::raw::c_void,
         pub state: root::UINT,
     }
+    impl Default for HDITEM {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct TCITEM {
@@ -568,6 +672,11 @@ pub mod root {
         pub cchTextMax: ::std::os::raw::c_int,
         pub iImage: ::std::os::raw::c_int,
         pub lParam: root::LPARAM,
+    }
+    impl Default for TCITEM {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     #[derive(Debug, Copy, Clone)]
@@ -589,6 +698,11 @@ pub mod root {
         pub cChildren: ::std::os::raw::c_int,
         pub lParam: root::LPARAM,
     }
+    impl Default for TVITEM {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     pub type LPTVITEM = *mut root::TVITEM;
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -597,6 +711,11 @@ pub mod root {
         pub hInsertAfter: root::HTREEITEM,
         pub item: root::TVITEM,
     }
+    impl Default for TVINSERTSTRUCT {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     pub type TV_INSERTSTRUCT = root::TVINSERTSTRUCT;
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -604,6 +723,11 @@ pub mod root {
         pub pt: root::POINT,
         pub flags: root::UINT,
         pub hItem: root::HTREEITEM,
+    }
+    impl Default for TVHITTESTINFO {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -621,8 +745,13 @@ pub mod root {
         pub cch: ::std::os::raw::c_int,
         pub hbmpItem: root::HBITMAP,
     }
+    impl Default for MENUITEMINFO {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct LOGFONT {
         pub lfHeight: ::std::os::raw::c_int,
         pub lfWidth: ::std::os::raw::c_int,
@@ -640,7 +769,7 @@ pub mod root {
         pub lfFaceName: [::std::os::raw::c_char; 32usize],
     }
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct TEXTMETRIC {
         pub tmHeight: root::LONG,
         pub tmAscent: root::LONG,
@@ -655,8 +784,13 @@ pub mod root {
         pub fErase: root::BOOL,
         pub rcPaint: root::RECT,
     }
+    impl Default for PAINTSTRUCT {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct SCROLLINFO {
         pub cbSize: root::UINT,
         pub fMask: root::UINT,
@@ -687,6 +821,11 @@ pub mod root {
         pub dwSequenceID: root::DWORD,
         pub ullArguments: root::ULONGLONG,
         pub cbExtraArgs: root::UINT,
+    }
+    impl Default for tagGESTUREINFO {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     pub type GESTUREINFO = root::tagGESTUREINFO;
     pub type PROPENUMPROCEX = ::std::option::Option<
@@ -735,6 +874,11 @@ pub mod root {
         pub hbmMask: root::HBITMAP,
         pub hbmColor: root::HBITMAP,
     }
+    impl Default for _ICONINFO {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     pub type ICONINFO = root::_ICONINFO;
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -753,6 +897,11 @@ pub mod root {
             ) -> *mut ::std::os::raw::c_void,
         >,
     }
+    impl Default for reaper_plugin_info_t {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     pub struct ProjectStateContext__bindgen_vtable(::std::os::raw::c_void);
     #[repr(C)]
@@ -760,9 +909,14 @@ pub mod root {
     pub struct ProjectStateContext {
         pub vtable_: *const ProjectStateContext__bindgen_vtable,
     }
+    impl Default for ProjectStateContext {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[doc = " MIDI event definition and abstract list"]
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct MIDI_event_t {
         pub frame_offset: ::std::os::raw::c_int,
         pub size: ::std::os::raw::c_int,
@@ -774,6 +928,11 @@ pub mod root {
     #[derive(Debug, Hash, PartialEq, Eq)]
     pub struct MIDI_eventlist {
         pub vtable_: *const MIDI_eventlist__bindgen_vtable,
+    }
+    impl Default for MIDI_eventlist {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[doc = " PCM source API"]
     #[repr(C)]
@@ -789,6 +948,11 @@ pub mod root {
         pub approximate_playback_latency: f64,
         pub absolute_time_s: f64,
         pub force_bpm: f64,
+    }
+    impl Default for PCM_source_transfer_t {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     #[derive(Debug, Copy, Clone, PartialEq)]
@@ -817,12 +981,22 @@ pub mod root {
     pub const PCM_source_peaktransfer_t_PEAKTRANSFER_MIDI_DRUM_TRIANGLE_MODE:
         root::PCM_source_peaktransfer_t__bindgen_ty_1 = 4;
     pub type PCM_source_peaktransfer_t__bindgen_ty_1 = u32;
+    impl Default for PCM_source_peaktransfer_t {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     pub struct PCM_source__bindgen_vtable(::std::os::raw::c_void);
     #[repr(C)]
     #[derive(Debug, Hash, PartialEq, Eq)]
     pub struct PCM_source {
         pub vtable_: *const PCM_source__bindgen_vtable,
+    }
+    impl Default for PCM_source {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     pub struct ISimpleMediaDecoder__bindgen_vtable(::std::os::raw::c_void);
@@ -831,6 +1005,11 @@ pub mod root {
     pub struct ISimpleMediaDecoder {
         pub vtable_: *const ISimpleMediaDecoder__bindgen_vtable,
     }
+    impl Default for ISimpleMediaDecoder {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     pub struct PCM_sink__bindgen_vtable(::std::os::raw::c_void);
     #[repr(C)]
@@ -838,6 +1017,11 @@ pub mod root {
     pub struct PCM_sink {
         pub vtable_: *const PCM_sink__bindgen_vtable,
         pub m_st: f64,
+    }
+    impl Default for PCM_sink {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     pub struct REAPER_Resample_Interface__bindgen_vtable(::std::os::raw::c_void);
@@ -850,12 +1034,22 @@ pub mod root {
     pub struct REAPER_Resample_Interface {
         pub vtable_: *const REAPER_Resample_Interface__bindgen_vtable,
     }
+    impl Default for REAPER_Resample_Interface {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     pub struct IReaperPitchShift__bindgen_vtable(::std::os::raw::c_void);
     #[repr(C)]
     #[derive(Debug, Hash, PartialEq, Eq)]
     pub struct IReaperPitchShift {
         pub vtable_: *const IReaperPitchShift__bindgen_vtable,
+    }
+    impl Default for IReaperPitchShift {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     pub struct REAPER_PeakGet_Interface__bindgen_vtable(::std::os::raw::c_void);
@@ -869,6 +1063,11 @@ pub mod root {
     pub struct REAPER_PeakGet_Interface {
         pub vtable_: *const REAPER_PeakGet_Interface__bindgen_vtable,
     }
+    impl Default for REAPER_PeakGet_Interface {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     pub struct REAPER_PeakBuild_Interface__bindgen_vtable(::std::os::raw::c_void);
     #[repr(C)]
@@ -876,11 +1075,21 @@ pub mod root {
     pub struct REAPER_PeakBuild_Interface {
         pub vtable_: *const REAPER_PeakBuild_Interface__bindgen_vtable,
     }
+    impl Default for REAPER_PeakBuild_Interface {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct gaccel_register_t {
         pub accel: root::ACCEL,
         pub desc: *const ::std::os::raw::c_char,
+    }
+    impl Default for gaccel_register_t {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -904,14 +1113,24 @@ pub mod root {
             ) -> *mut root::ReaSample,
         >,
     }
+    impl Default for audio_hook_register_t {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct KbdCmd {
         pub cmd: root::DWORD,
         pub text: *const ::std::os::raw::c_char,
     }
+    impl Default for KbdCmd {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
-    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+    #[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
     pub struct KbdKeyBindingInfo {
         pub key: ::std::os::raw::c_int,
         pub cmd: ::std::os::raw::c_int,
@@ -939,17 +1158,10 @@ pub mod root {
         pub recent_cmds: *mut ::std::os::raw::c_void,
         pub extended_data: [*mut ::std::os::raw::c_void; 32usize],
     }
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct preview_register_t {
-        pub mutex: root::pthread_mutex_t,
-        pub src: *mut root::PCM_source,
-        pub m_out_chan: ::std::os::raw::c_int,
-        pub curpos: f64,
-        pub loop_: bool,
-        pub volume: f64,
-        pub peakvol: [f64; 2usize],
-        pub preview_track: *mut ::std::os::raw::c_void,
+    impl Default for KbdSectionInfo {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     pub type screensetNewCallbackFunc = ::std::option::Option<
         unsafe extern "C" fn(
@@ -967,12 +1179,22 @@ pub mod root {
     pub struct midi_Output {
         pub vtable_: *const midi_Output__bindgen_vtable,
     }
+    impl Default for midi_Output {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
+    }
     #[repr(C)]
     pub struct midi_Input__bindgen_vtable(::std::os::raw::c_void);
     #[repr(C)]
     #[derive(Debug, Hash, PartialEq, Eq)]
     pub struct midi_Input {
         pub vtable_: *const midi_Input__bindgen_vtable,
+    }
+    impl Default for midi_Input {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     #[repr(C)]
     #[derive(Debug, Copy, Clone)]
@@ -1005,6 +1227,11 @@ pub mod root {
     #[derive(Debug, Hash, PartialEq, Eq)]
     pub struct IReaperControlSurface {
         pub vtable_: *const IReaperControlSurface__bindgen_vtable,
+    }
+    impl Default for IReaperControlSurface {
+        fn default() -> Self {
+            unsafe { ::std::mem::zeroed() }
+        }
     }
     pub mod reaper_functions {
         #[allow(unused_imports)]
@@ -10683,86 +10910,96 @@ pub mod root {
                 unsafe extern "C" fn(arg1: root::HWND, arg2: *const ::std::os::raw::c_char),
             >;
         }
+        extern "C" {
+            pub static mut SWELL_osx_is_dark_mode:
+                ::std::option::Option<unsafe extern "C" fn(mode: ::std::os::raw::c_int) -> bool>;
+        }
     }
     pub mod reaper_control_surface {
         #[allow(unused_imports)]
         use self::super::super::root;
         extern "C" {
-            pub fn add_control_surface(
+            pub fn create_cpp_to_rust_control_surface(
                 callback_target: *mut ::std::os::raw::c_void,
             ) -> *mut root::IReaperControlSurface;
         }
         extern "C" {
-            pub fn remove_control_surface(surface: *mut root::IReaperControlSurface);
+            pub fn delete_control_surface(surface: *mut root::IReaperControlSurface);
         }
         extern "C" {
-            pub fn GetTypeString(
+            pub fn cpp_to_rust_IReaperControlSurface_GetTypeString(
                 callback_target: *mut ::std::os::raw::c_void,
             ) -> *const ::std::os::raw::c_char;
         }
         extern "C" {
-            pub fn GetDescString(
+            pub fn cpp_to_rust_IReaperControlSurface_GetDescString(
                 callback_target: *mut ::std::os::raw::c_void,
             ) -> *const ::std::os::raw::c_char;
         }
         extern "C" {
-            pub fn GetConfigString(
+            pub fn cpp_to_rust_IReaperControlSurface_GetConfigString(
                 callback_target: *mut ::std::os::raw::c_void,
             ) -> *const ::std::os::raw::c_char;
         }
         extern "C" {
-            pub fn CloseNoReset(callback_target: *mut ::std::os::raw::c_void);
+            pub fn cpp_to_rust_IReaperControlSurface_CloseNoReset(
+                callback_target: *mut ::std::os::raw::c_void,
+            );
         }
         extern "C" {
-            pub fn Run(callback_target: *mut ::std::os::raw::c_void);
+            pub fn cpp_to_rust_IReaperControlSurface_Run(
+                callback_target: *mut ::std::os::raw::c_void,
+            );
         }
         extern "C" {
-            pub fn SetTrackListChange(callback_target: *mut ::std::os::raw::c_void);
+            pub fn cpp_to_rust_IReaperControlSurface_SetTrackListChange(
+                callback_target: *mut ::std::os::raw::c_void,
+            );
         }
         extern "C" {
-            pub fn SetSurfaceVolume(
+            pub fn cpp_to_rust_IReaperControlSurface_SetSurfaceVolume(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
                 volume: f64,
             );
         }
         extern "C" {
-            pub fn SetSurfacePan(
+            pub fn cpp_to_rust_IReaperControlSurface_SetSurfacePan(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
                 pan: f64,
             );
         }
         extern "C" {
-            pub fn SetSurfaceMute(
+            pub fn cpp_to_rust_IReaperControlSurface_SetSurfaceMute(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
                 mute: bool,
             );
         }
         extern "C" {
-            pub fn SetSurfaceSelected(
+            pub fn cpp_to_rust_IReaperControlSurface_SetSurfaceSelected(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
                 selected: bool,
             );
         }
         extern "C" {
-            pub fn SetSurfaceSolo(
+            pub fn cpp_to_rust_IReaperControlSurface_SetSurfaceSolo(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
                 solo: bool,
             );
         }
         extern "C" {
-            pub fn SetSurfaceRecArm(
+            pub fn cpp_to_rust_IReaperControlSurface_SetSurfaceRecArm(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
                 recarm: bool,
             );
         }
         extern "C" {
-            pub fn SetPlayState(
+            pub fn cpp_to_rust_IReaperControlSurface_SetPlayState(
                 callback_target: *mut ::std::os::raw::c_void,
                 play: bool,
                 pause: bool,
@@ -10770,45 +11007,50 @@ pub mod root {
             );
         }
         extern "C" {
-            pub fn SetRepeatState(callback_target: *mut ::std::os::raw::c_void, rep: bool);
+            pub fn cpp_to_rust_IReaperControlSurface_SetRepeatState(
+                callback_target: *mut ::std::os::raw::c_void,
+                rep: bool,
+            );
         }
         extern "C" {
-            pub fn SetTrackTitle(
+            pub fn cpp_to_rust_IReaperControlSurface_SetTrackTitle(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
                 title: *const ::std::os::raw::c_char,
             );
         }
         extern "C" {
-            pub fn GetTouchState(
+            pub fn cpp_to_rust_IReaperControlSurface_GetTouchState(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
                 isPan: ::std::os::raw::c_int,
             ) -> bool;
         }
         extern "C" {
-            pub fn SetAutoMode(
+            pub fn cpp_to_rust_IReaperControlSurface_SetAutoMode(
                 callback_target: *mut ::std::os::raw::c_void,
                 mode: ::std::os::raw::c_int,
             );
         }
         extern "C" {
-            pub fn ResetCachedVolPanStates(callback_target: *mut ::std::os::raw::c_void);
+            pub fn cpp_to_rust_IReaperControlSurface_ResetCachedVolPanStates(
+                callback_target: *mut ::std::os::raw::c_void,
+            );
         }
         extern "C" {
-            pub fn OnTrackSelection(
+            pub fn cpp_to_rust_IReaperControlSurface_OnTrackSelection(
                 callback_target: *mut ::std::os::raw::c_void,
                 trackid: *mut root::MediaTrack,
             );
         }
         extern "C" {
-            pub fn IsKeyDown(
+            pub fn cpp_to_rust_IReaperControlSurface_IsKeyDown(
                 callback_target: *mut ::std::os::raw::c_void,
                 key: ::std::os::raw::c_int,
             ) -> bool;
         }
         extern "C" {
-            pub fn Extended(
+            pub fn cpp_to_rust_IReaperControlSurface_Extended(
                 callback_target: *mut ::std::os::raw::c_void,
                 call: ::std::os::raw::c_int,
                 parm1: *mut ::std::os::raw::c_void,
@@ -10827,6 +11069,12 @@ pub mod root {
             ) -> *mut root::MIDI_event_t;
         }
         extern "C" {
+            pub fn MIDI_eventlist_AddItem(
+                self_: *mut root::MIDI_eventlist,
+                evt: *mut root::MIDI_event_t,
+            );
+        }
+        extern "C" {
             pub fn midi_Input_GetReadBuf(self_: *mut root::midi_Input)
             -> *mut root::MIDI_eventlist;
         }
@@ -10838,6 +11086,279 @@ pub mod root {
                 d2: ::std::os::raw::c_uchar,
                 frame_offset: ::std::os::raw::c_int,
             );
+        }
+        extern "C" {
+            pub fn midi_Output_SendMsg(
+                self_: *mut root::midi_Output,
+                msg: *mut root::MIDI_event_t,
+                frame_offset: ::std::os::raw::c_int,
+            );
+        }
+    }
+    pub mod reaper_pcm_source {
+        #[allow(unused_imports)]
+        use self::super::super::root;
+        extern "C" {
+            pub fn create_cpp_to_rust_pcm_source(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> *mut root::PCM_source;
+        }
+        extern "C" {
+            pub fn delete_pcm_source(source: *mut root::PCM_source);
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetLength(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> f64;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_Duplicate(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> *mut root::PCM_source;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetType(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> *const ::std::os::raw::c_char;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetFileName(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> *const ::std::os::raw::c_char;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetSource(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> *mut root::PCM_source;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_IsAvailable(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> bool;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_SetAvailable(
+                callback_target: *mut ::std::os::raw::c_void,
+                avail: bool,
+            );
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_SetFileName(
+                callback_target: *mut ::std::os::raw::c_void,
+                newfn: *const ::std::os::raw::c_char,
+            ) -> bool;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_SetSource(
+                callback_target: *mut ::std::os::raw::c_void,
+                src: *mut root::PCM_source,
+            );
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetNumChannels(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetSampleRate(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> f64;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetLengthBeats(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> f64;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetBitsPerSample(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetPreferredPosition(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> f64;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_PropertiesWindow(
+                callback_target: *mut ::std::os::raw::c_void,
+                hwndParent: root::HWND,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetSamples(
+                callback_target: *mut ::std::os::raw::c_void,
+                block: *mut root::PCM_source_transfer_t,
+            );
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_GetPeakInfo(
+                callback_target: *mut ::std::os::raw::c_void,
+                block: *mut root::PCM_source_peaktransfer_t,
+            );
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_SaveState(
+                callback_target: *mut ::std::os::raw::c_void,
+                ctx: *mut root::ProjectStateContext,
+            );
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_LoadState(
+                callback_target: *mut ::std::os::raw::c_void,
+                firstline: *const ::std::os::raw::c_char,
+                ctx: *mut root::ProjectStateContext,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_Peaks_Clear(
+                callback_target: *mut ::std::os::raw::c_void,
+                deleteFile: bool,
+            );
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_PeaksBuild_Begin(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_PeaksBuild_Run(
+                callback_target: *mut ::std::os::raw::c_void,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_PeaksBuild_Finish(
+                callback_target: *mut ::std::os::raw::c_void,
+            );
+        }
+        extern "C" {
+            pub fn cpp_to_rust_PCM_source_Extended(
+                callback_target: *mut ::std::os::raw::c_void,
+                call: ::std::os::raw::c_int,
+                parm1: *mut ::std::os::raw::c_void,
+                parm2: *mut ::std::os::raw::c_void,
+                parm3: *mut ::std::os::raw::c_void,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetLength(self_: *mut root::PCM_source) -> f64;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_Duplicate(
+                self_: *mut root::PCM_source,
+            ) -> *mut root::PCM_source;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetType(
+                self_: *mut root::PCM_source,
+            ) -> *const ::std::os::raw::c_char;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetFileName(
+                self_: *mut root::PCM_source,
+            ) -> *const ::std::os::raw::c_char;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetSource(
+                self_: *mut root::PCM_source,
+            ) -> *mut root::PCM_source;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_IsAvailable(self_: *mut root::PCM_source) -> bool;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_SetAvailable(self_: *mut root::PCM_source, avail: bool);
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_SetFileName(
+                self_: *mut root::PCM_source,
+                newfn: *const ::std::os::raw::c_char,
+            ) -> bool;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_SetSource(
+                self_: *mut root::PCM_source,
+                src: *mut root::PCM_source,
+            );
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetNumChannels(
+                self_: *mut root::PCM_source,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetSampleRate(self_: *mut root::PCM_source) -> f64;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetLengthBeats(self_: *mut root::PCM_source) -> f64;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetBitsPerSample(
+                self_: *mut root::PCM_source,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetPreferredPosition(self_: *mut root::PCM_source)
+            -> f64;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_PropertiesWindow(
+                self_: *mut root::PCM_source,
+                hwndParent: root::HWND,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetSamples(
+                self_: *mut root::PCM_source,
+                block: *mut root::PCM_source_transfer_t,
+            );
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_GetPeakInfo(
+                self_: *mut root::PCM_source,
+                block: *mut root::PCM_source_peaktransfer_t,
+            );
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_SaveState(
+                self_: *mut root::PCM_source,
+                ctx: *mut root::ProjectStateContext,
+            );
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_LoadState(
+                self_: *mut root::PCM_source,
+                firstline: *const ::std::os::raw::c_char,
+                ctx: *mut root::ProjectStateContext,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_Peaks_Clear(
+                self_: *mut root::PCM_source,
+                deleteFile: bool,
+            );
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_PeaksBuild_Begin(
+                self_: *mut root::PCM_source,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_PeaksBuild_Run(
+                self_: *mut root::PCM_source,
+            ) -> ::std::os::raw::c_int;
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_PeaksBuild_Finish(self_: *mut root::PCM_source);
+        }
+        extern "C" {
+            pub fn rust_to_cpp_PCM_source_Extended(
+                self_: *mut root::PCM_source,
+                call: ::std::os::raw::c_int,
+                parm1: *mut ::std::os::raw::c_void,
+                parm2: *mut ::std::os::raw::c_void,
+                parm3: *mut ::std::os::raw::c_void,
+            ) -> ::std::os::raw::c_int;
         }
     }
 }

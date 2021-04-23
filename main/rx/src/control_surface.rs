@@ -1,5 +1,6 @@
 use crate::{EventStreamSubject, ReactiveEvent};
-use reaper_high::{ChangeEvent, Fx, FxParameter, Project, Track, TrackSend};
+use reaper_high::{AvailablePanValue, ChangeEvent, Fx, FxParameter, Project, Track, TrackRoute};
+use reaper_medium::Pan;
 use rxrust::prelude::*;
 use std::cell::RefCell;
 use std::fmt;
@@ -21,45 +22,126 @@ impl ControlSurfaceRxMiddleware {
     pub fn handle_change(&self, event: ChangeEvent) {
         use ChangeEvent::*;
         match event {
-            ProjectSwitched(p) => self.rx.project_switched.borrow_mut().next(p),
-            TrackVolumeChanged(t) => self.rx.track_volume_changed.borrow_mut().next(t),
-            TrackVolumeTouched(t) => self.rx.track_volume_touched.borrow_mut().next(t),
-            TrackPanChanged(t) => self.rx.track_pan_changed.borrow_mut().next(t),
-            TrackPanTouched(t) => self.rx.track_pan_touched.borrow_mut().next(t),
-            TrackSendVolumeChanged(ts) => self.rx.track_send_volume_changed.borrow_mut().next(ts),
-            TrackSendVolumeTouched(ts) => self.rx.track_send_volume_touched.borrow_mut().next(ts),
-            TrackSendPanChanged(ts) => self.rx.track_send_pan_changed.borrow_mut().next(ts),
-            TrackSendPanTouched(ts) => self.rx.track_send_pan_touched.borrow_mut().next(ts),
-            TrackAdded(t) => self.rx.track_added.borrow_mut().next(t),
-            TrackRemoved(t) => self.rx.track_removed.borrow_mut().next(t),
-            TracksReordered(p) => self.rx.tracks_reordered.borrow_mut().next(p),
-            TrackNameChanged(t) => self.rx.track_name_changed.borrow_mut().next(t),
-            TrackInputChanged(t) => self.rx.track_input_changed.borrow_mut().next(t),
-            TrackInputMonitoringChanged(t) => {
-                self.rx.track_input_monitoring_changed.borrow_mut().next(t)
+            ProjectSwitched(e) => self.rx.project_switched.borrow_mut().next(e.new_project),
+            TrackVolumeChanged(e) => {
+                self.rx
+                    .track_volume_changed
+                    .borrow_mut()
+                    .next(e.track.clone());
+                if e.touched {
+                    self.rx.track_volume_touched.borrow_mut().next(e.track);
+                }
             }
-            TrackArmChanged(t) => self.rx.track_arm_changed.borrow_mut().next(t),
-            TrackMuteChanged(t) => self.rx.track_mute_changed.borrow_mut().next(t),
-            TrackMuteTouched(t) => self.rx.track_mute_touched.borrow_mut().next(t),
-            TrackSoloChanged(t) => self.rx.track_solo_changed.borrow_mut().next(t),
-            TrackSelectedChanged(t) => self.rx.track_selected_changed.borrow_mut().next(t),
-            FxAdded(f) => self.rx.fx_added.borrow_mut().next(f),
-            FxRemoved(f) => self.rx.fx_removed.borrow_mut().next(f),
-            FxEnabledChanged(f) => self.rx.fx_enabled_changed.borrow_mut().next(f),
-            FxOpened(f) => self.rx.fx_opened.borrow_mut().next(f),
-            FxClosed(f) => self.rx.fx_closed.borrow_mut().next(f),
-            FxFocused(f) => self.rx.fx_focused.borrow_mut().next(f),
-            FxReordered(t) => self.rx.fx_reordered.borrow_mut().next(t),
-            FxParameterValueChanged(p) => self.rx.fx_parameter_value_changed.borrow_mut().next(p),
-            FxParameterTouched(p) => self.rx.fx_parameter_touched.borrow_mut().next(p),
-            FxPresetChanged(f) => self.rx.fx_preset_changed.borrow_mut().next(f),
-            MasterTempoChanged => self.rx.master_tempo_changed.borrow_mut().next(()),
-            MasterTempoTouched => self.rx.master_tempo_touched.borrow_mut().next(()),
-            MasterPlayrateChanged => self.rx.master_playrate_changed.borrow_mut().next(()),
-            MasterPlayrateTouched => self.rx.master_playrate_touched.borrow_mut().next(()),
-            PlayStateChanged => self.rx.play_state_changed.borrow_mut().next(()),
-            RepeatStateChanged => self.rx.repeat_state_changed.borrow_mut().next(()),
-            ProjectClosed(p) => self.rx.project_closed.borrow_mut().next(p),
+            TrackPanChanged(e) => {
+                self.rx.track_pan_changed.borrow_mut().next(e.track.clone());
+                if e.touched {
+                    // When it's touched, it should always be complete.
+                    if let AvailablePanValue::Complete(new_value) = e.new_value {
+                        self.rx.track_pan_touched.borrow_mut().next((
+                            e.track,
+                            e.old_value,
+                            new_value,
+                        ));
+                    }
+                }
+            }
+            TrackRouteVolumeChanged(e) => {
+                self.rx
+                    .track_route_volume_changed
+                    .borrow_mut()
+                    .next(e.route.clone());
+                if e.touched {
+                    self.rx
+                        .track_route_volume_touched
+                        .borrow_mut()
+                        .next(e.route);
+                }
+            }
+            TrackRoutePanChanged(e) => {
+                self.rx
+                    .track_route_pan_changed
+                    .borrow_mut()
+                    .next(e.route.clone());
+                if e.touched {
+                    self.rx.track_route_pan_touched.borrow_mut().next(e.route);
+                }
+            }
+            TrackAdded(e) => self.rx.track_added.borrow_mut().next(e.track),
+            TrackRemoved(e) => self.rx.track_removed.borrow_mut().next(e.track),
+            TracksReordered(e) => self.rx.tracks_reordered.borrow_mut().next(e.project),
+            TrackNameChanged(e) => self.rx.track_name_changed.borrow_mut().next(e.track),
+            TrackInputChanged(e) => self.rx.track_input_changed.borrow_mut().next(e.track),
+            TrackInputMonitoringChanged(e) => self
+                .rx
+                .track_input_monitoring_changed
+                .borrow_mut()
+                .next(e.track),
+            TrackAutomationModeChanged(e) => self
+                .rx
+                .track_automation_mode_changed
+                .borrow_mut()
+                .next(e.track),
+            TrackArmChanged(e) => self.rx.track_arm_changed.borrow_mut().next(e.track),
+            TrackMuteChanged(e) => {
+                self.rx
+                    .track_mute_changed
+                    .borrow_mut()
+                    .next(e.track.clone());
+                if e.touched {
+                    self.rx.track_mute_touched.borrow_mut().next(e.track);
+                }
+            }
+            TrackSoloChanged(e) => self.rx.track_solo_changed.borrow_mut().next(e.track),
+            TrackSelectedChanged(e) => self
+                .rx
+                .track_selected_changed
+                .borrow_mut()
+                .next((e.track, e.new_value)),
+            FxAdded(e) => self.rx.fx_added.borrow_mut().next(e.fx),
+            FxRemoved(e) => self.rx.fx_removed.borrow_mut().next(e.fx),
+            FxEnabledChanged(e) => self.rx.fx_enabled_changed.borrow_mut().next(e.fx),
+            FxOpened(e) => self.rx.fx_opened.borrow_mut().next(e.fx),
+            FxClosed(e) => self.rx.fx_closed.borrow_mut().next(e.fx),
+            FxFocused(e) => self.rx.fx_focused.borrow_mut().next(e.fx),
+            FxReordered(e) => self.rx.fx_reordered.borrow_mut().next(e.track),
+            FxParameterValueChanged(e) => {
+                self.rx
+                    .fx_parameter_value_changed
+                    .borrow_mut()
+                    .next(e.parameter.clone());
+                if e.touched {
+                    self.rx.fx_parameter_touched.borrow_mut().next(e.parameter);
+                }
+            }
+            FxPresetChanged(e) => self.rx.fx_preset_changed.borrow_mut().next(e.fx),
+            MasterTempoChanged(e) => {
+                self.rx.master_tempo_changed.borrow_mut().next(());
+                if e.touched {
+                    self.rx.master_tempo_touched.borrow_mut().next(());
+                }
+            }
+            MasterPlayrateChanged(e) => {
+                self.rx.master_playrate_changed.borrow_mut().next(());
+                if e.touched {
+                    self.rx.master_playrate_touched.borrow_mut().next(());
+                }
+            }
+            PlayStateChanged(_) => self.rx.play_state_changed.borrow_mut().next(()),
+            RepeatStateChanged(_) => self.rx.repeat_state_changed.borrow_mut().next(()),
+            ProjectClosed(e) => self.rx.project_closed.borrow_mut().next(e.project),
+            GlobalAutomationOverrideChanged(_) => self
+                .rx
+                .global_automation_override_changed
+                .borrow_mut()
+                .next(()),
+            BookmarksChanged(_) => self.rx.bookmarks_changed.borrow_mut().next(()),
+            ReceiveCountChanged(e) => self.rx.receive_count_changed.borrow_mut().next(e.track),
+            HardwareOutputSendCountChanged(e) => self
+                .rx
+                .hardware_output_send_count_changed
+                .borrow_mut()
+                .next(e.track),
+            TrackSendCountChanged(e) => self.rx.track_send_count_changed.borrow_mut().next(e.track),
         };
     }
 }
@@ -68,25 +150,31 @@ impl ControlSurfaceRxMiddleware {
 pub struct ControlSurfaceRx {
     pub main_thread_idle: EventStreamSubject<()>,
     pub project_switched: EventStreamSubject<Project>,
+    pub global_automation_override_changed: EventStreamSubject<()>,
     pub track_volume_changed: EventStreamSubject<Track>,
     pub track_volume_touched: EventStreamSubject<Track>,
     pub track_pan_changed: EventStreamSubject<Track>,
-    pub track_pan_touched: EventStreamSubject<Track>,
-    pub track_send_volume_changed: EventStreamSubject<TrackSend>,
-    pub track_send_volume_touched: EventStreamSubject<TrackSend>,
-    pub track_send_pan_changed: EventStreamSubject<TrackSend>,
-    pub track_send_pan_touched: EventStreamSubject<TrackSend>,
+    /// Old, New.
+    pub track_pan_touched: EventStreamSubject<(Track, Pan, Pan)>,
+    pub track_route_volume_changed: EventStreamSubject<TrackRoute>,
+    pub track_route_volume_touched: EventStreamSubject<TrackRoute>,
+    pub track_route_pan_changed: EventStreamSubject<TrackRoute>,
+    pub track_route_pan_touched: EventStreamSubject<TrackRoute>,
     pub track_added: EventStreamSubject<Track>,
     pub track_removed: EventStreamSubject<Track>,
     pub tracks_reordered: EventStreamSubject<Project>,
+    pub receive_count_changed: EventStreamSubject<Track>,
+    pub track_send_count_changed: EventStreamSubject<Track>,
+    pub hardware_output_send_count_changed: EventStreamSubject<Track>,
     pub track_name_changed: EventStreamSubject<Track>,
     pub track_input_changed: EventStreamSubject<Track>,
     pub track_input_monitoring_changed: EventStreamSubject<Track>,
+    pub track_automation_mode_changed: EventStreamSubject<Track>,
     pub track_arm_changed: EventStreamSubject<Track>,
     pub track_mute_changed: EventStreamSubject<Track>,
     pub track_mute_touched: EventStreamSubject<Track>,
     pub track_solo_changed: EventStreamSubject<Track>,
-    pub track_selected_changed: EventStreamSubject<Track>,
+    pub track_selected_changed: EventStreamSubject<(Track, bool)>,
     pub fx_added: EventStreamSubject<Fx>,
     pub fx_removed: EventStreamSubject<Fx>,
     pub fx_enabled_changed: EventStreamSubject<Fx>,
@@ -104,6 +192,7 @@ pub struct ControlSurfaceRx {
     pub play_state_changed: EventStreamSubject<()>,
     pub repeat_state_changed: EventStreamSubject<()>,
     pub project_closed: EventStreamSubject<Project>,
+    pub bookmarks_changed: EventStreamSubject<()>,
 }
 
 impl fmt::Debug for ControlSurfaceRx {
@@ -120,20 +209,25 @@ impl ControlSurfaceRx {
         ControlSurfaceRx {
             main_thread_idle: default(),
             project_switched: default(),
+            global_automation_override_changed: default(),
             track_volume_changed: default(),
             track_volume_touched: default(),
             track_pan_changed: default(),
             track_pan_touched: default(),
-            track_send_volume_changed: default(),
-            track_send_volume_touched: default(),
-            track_send_pan_changed: default(),
-            track_send_pan_touched: default(),
+            track_route_volume_changed: default(),
+            track_route_volume_touched: default(),
+            track_route_pan_changed: default(),
+            track_route_pan_touched: default(),
             track_added: default(),
             track_removed: default(),
             tracks_reordered: default(),
+            receive_count_changed: default(),
+            track_send_count_changed: default(),
+            hardware_output_send_count_changed: default(),
             track_name_changed: default(),
             track_input_changed: default(),
             track_input_monitoring_changed: default(),
+            track_automation_mode_changed: default(),
             track_arm_changed: default(),
             track_mute_changed: default(),
             track_mute_touched: default(),
@@ -156,6 +250,7 @@ impl ControlSurfaceRx {
             play_state_changed: default(),
             repeat_state_changed: default(),
             project_closed: default(),
+            bookmarks_changed: default(),
         }
     }
 
@@ -163,8 +258,20 @@ impl ControlSurfaceRx {
         self.project_switched.borrow().clone()
     }
 
+    pub fn global_automation_override_changed(&self) -> impl ReactiveEvent<()> {
+        self.global_automation_override_changed.borrow().clone()
+    }
+
+    pub fn bookmarks_changed(&self) -> impl ReactiveEvent<()> {
+        self.bookmarks_changed.borrow().clone()
+    }
+
     pub fn fx_opened(&self) -> impl ReactiveEvent<Fx> {
         self.fx_opened.borrow().clone()
+    }
+
+    pub fn fx_closed(&self) -> impl ReactiveEvent<Fx> {
+        self.fx_closed.borrow().clone()
     }
 
     pub fn fx_focused(&self) -> impl ReactiveEvent<Option<Fx>> {
@@ -182,6 +289,18 @@ impl ControlSurfaceRx {
 
     pub fn tracks_reordered(&self) -> impl ReactiveEvent<Project> {
         self.tracks_reordered.borrow().clone()
+    }
+
+    pub fn receive_count_changed(&self) -> impl ReactiveEvent<Track> {
+        self.receive_count_changed.borrow().clone()
+    }
+
+    pub fn track_send_count_changed(&self) -> impl ReactiveEvent<Track> {
+        self.track_send_count_changed.borrow().clone()
+    }
+
+    pub fn hardware_output_send_count_changed(&self) -> impl ReactiveEvent<Track> {
+        self.hardware_output_send_count_changed.borrow().clone()
     }
 
     pub fn track_name_changed(&self) -> impl ReactiveEvent<Track> {
@@ -244,6 +363,10 @@ impl ControlSurfaceRx {
         self.track_input_monitoring_changed.borrow().clone()
     }
 
+    pub fn track_automation_mode_changed(&self) -> impl ReactiveEvent<Track> {
+        self.track_automation_mode_changed.borrow().clone()
+    }
+
     pub fn track_input_changed(&self) -> impl ReactiveEvent<Track> {
         self.track_input_changed.borrow().clone()
     }
@@ -260,11 +383,13 @@ impl ControlSurfaceRx {
         self.track_pan_changed.borrow().clone()
     }
 
-    pub fn track_pan_touched(&self) -> impl ReactiveEvent<Track> {
+    /// Old, new
+    pub fn track_pan_touched(&self) -> impl ReactiveEvent<(Track, Pan, Pan)> {
         self.track_pan_touched.borrow().clone()
     }
 
-    pub fn track_selected_changed(&self) -> impl ReactiveEvent<Track> {
+    /// New
+    pub fn track_selected_changed(&self) -> impl ReactiveEvent<(Track, bool)> {
         self.track_selected_changed.borrow().clone()
     }
 
@@ -286,20 +411,20 @@ impl ControlSurfaceRx {
         self.track_arm_changed.borrow().clone()
     }
 
-    pub fn track_send_volume_changed(&self) -> impl ReactiveEvent<TrackSend> {
-        self.track_send_volume_changed.borrow().clone()
+    pub fn track_route_volume_changed(&self) -> impl ReactiveEvent<TrackRoute> {
+        self.track_route_volume_changed.borrow().clone()
     }
 
-    pub fn track_send_volume_touched(&self) -> impl ReactiveEvent<TrackSend> {
-        self.track_send_volume_touched.borrow().clone()
+    pub fn track_route_volume_touched(&self) -> impl ReactiveEvent<TrackRoute> {
+        self.track_route_volume_touched.borrow().clone()
     }
 
-    pub fn track_send_pan_changed(&self) -> impl ReactiveEvent<TrackSend> {
-        self.track_send_pan_changed.borrow().clone()
+    pub fn track_route_pan_changed(&self) -> impl ReactiveEvent<TrackRoute> {
+        self.track_route_pan_changed.borrow().clone()
     }
 
-    pub fn track_send_pan_touched(&self) -> impl ReactiveEvent<TrackSend> {
-        self.track_send_pan_touched.borrow().clone()
+    pub fn track_route_pan_touched(&self) -> impl ReactiveEvent<TrackRoute> {
+        self.track_route_pan_touched.borrow().clone()
     }
 
     /// Only fires if `run()` is called on the driver.

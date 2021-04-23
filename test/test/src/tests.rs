@@ -8,7 +8,8 @@ use c_str_macro::c_str;
 
 use reaper_high::{
     get_media_track_guid, toggleable, ActionCharacter, ActionKind, FxChain, FxParameterCharacter,
-    FxParameterValueRange, Guid, Pan, PlayRate, Reaper, Tempo, Track, Volume,
+    FxParameterValueRange, Guid, Pan, PlayRate, Reaper, SendPartnerType, Tempo, Track,
+    TrackRoutePartner, Volume, Width,
 };
 use rxrust::prelude::*;
 
@@ -21,11 +22,12 @@ use helgoboss_midi::{RawShortMessage, ShortMessageFactory};
 
 use reaper_medium::ProjectContext::CurrentProject;
 use reaper_medium::{
-    reaper_str, AutomationMode, Bpm, CommandId, Db, FxPresetRef, GangBehavior, InputMonitoringMode,
-    MasterTrackBehavior, MidiInputDeviceId, MidiOutputDeviceId, NormalizedPlayRate,
-    PlaybackSpeedFactor, ReaperNormalizedFxParamValue, ReaperPanValue, ReaperVersion,
-    ReaperVolumeValue, RecordingInput, StuffMidiMessageTarget, TrackLocation, UndoBehavior,
-    ValueChange,
+    reaper_str, AutoSeekBehavior, AutomationMode, Bpm, CommandId, Db, DurationInSeconds,
+    FxPresetRef, GangBehavior, InputMonitoringMode, MasterTrackBehavior, MidiInputDeviceId,
+    MidiOutputDeviceId, NormalizedPlayRate, PlaybackSpeedFactor, PositionInSeconds,
+    ReaperNormalizedFxParamValue, ReaperPanValue, ReaperVersion, ReaperVolumeValue,
+    ReaperWidthValue, RecordingInput, SoloMode, StuffMidiMessageTarget, TrackLocation,
+    UndoBehavior, ValueChange,
 };
 
 use reaper_low::{raw, Swell};
@@ -39,11 +41,13 @@ pub fn create_test_steps() -> impl Iterator<Item = TestStep> {
     // In theory all steps could be declared inline. But that makes the IDE become terribly slow.
     let steps_a = vec![
         global_instances(),
+        query_prefs(),
         register_api_functions(),
         strings(),
         low_plugin_context(),
         medium_plugin_context(),
         general(),
+        volume_types(),
         create_empty_project_in_new_tab(),
         play_pause_stop_record(),
         change_repeat_state(),
@@ -67,7 +71,9 @@ pub fn create_test_steps() -> impl Iterator<Item = TestStep> {
         set_track_volume(),
         set_track_volume_extreme_values(),
         query_track_pan(),
+        query_track_width(),
         set_track_pan(),
+        set_track_width(),
         disable_all_track_fx(),
         enable_all_track_fx(),
         query_track_selection_state(),
@@ -90,17 +96,22 @@ pub fn create_test_steps() -> impl Iterator<Item = TestStep> {
         remove_track(),
         query_track_automation_mode(),
         query_track_misc(),
-        query_track_send_count(),
+        query_track_route_count(),
         add_track_send(),
         query_track_send(),
         set_track_send_volume(),
         set_track_send_pan(),
+        set_track_send_mute(),
+        query_time_ranges(),
+        set_time_ranges(),
         query_action(),
         invoke_action(),
         test_action_invoked_event(),
         unmute_track(),
         mute_track(),
         solo_track(),
+        unsolo_track(),
+        solo_track_in_place(),
         unsolo_track(),
         generate_guid(),
         main_section_functions(),
@@ -593,6 +604,30 @@ fn solo_track() -> TestStep {
     })
 }
 
+fn solo_track_in_place() -> TestStep {
+    step(AllVersions, "Solo track in place", |_, step| {
+        // Given
+        let track = get_track(0)?;
+        // When
+        let (mock, _) = observe_invocations(|mock| {
+            Test::control_surface_rx()
+                .track_solo_changed()
+                .take_until(step.finished)
+                .subscribe(move |t| {
+                    mock.invoke(t);
+                });
+        });
+        track.set_solo_mode(SoloMode::SoloInPlace);
+        // Then
+        assert!(track.is_solo());
+        assert_eq!(track.solo_mode(), SoloMode::SoloInPlace);
+        // Started to be 2 when making master track notification work
+        assert_eq!(mock.invocation_count(), 2);
+        assert_eq!(mock.last_arg(), track);
+        Ok(())
+    })
+}
+
 fn mute_track() -> TestStep {
     step(AllVersions, "Mute track", |_, step| {
         // Given
@@ -738,28 +773,86 @@ fn query_action() -> TestStep {
     })
 }
 
+fn query_time_ranges() -> TestStep {
+    step(AllVersions, "Query time ranges", |_, _| {
+        // Given
+        let project = Reaper::get().current_project();
+        // When
+        let time_selection = project.time_selection();
+        let loop_points = project.loop_points();
+        // Then
+        assert!(time_selection.is_none());
+        assert!(loop_points.is_none());
+        Ok(())
+    })
+}
+
+fn set_time_ranges() -> TestStep {
+    step(AllVersions, "Set time ranges", |_, _| {
+        // Given
+        let project = Reaper::get().current_project();
+        // When
+        project.set_time_selection(PositionInSeconds::new(5.0), PositionInSeconds::new(7.0));
+        project.set_loop_points(
+            PositionInSeconds::new(5.0),
+            PositionInSeconds::new(7.0),
+            AutoSeekBehavior::DenyAutoSeek,
+        );
+        // Then
+        let time_selection = project.time_selection().unwrap();
+        assert!(abs_diff_eq!(time_selection.start.get(), 5.0));
+        assert!(abs_diff_eq!(time_selection.end.get(), 7.0));
+        let loop_points = project.loop_points().unwrap();
+        assert!(abs_diff_eq!(loop_points.start.get(), 5.0));
+        assert!(abs_diff_eq!(loop_points.end.get(), 7.0));
+        Ok(())
+    })
+}
+
 fn set_track_send_pan() -> TestStep {
     step(AllVersions, "Set track send pan", |_, step| {
         // Given
         let project = Reaper::get().current_project();
         let track_1 = project.track_by_index(0).ok_or("Missing track 1")?;
         let track_3 = project.track_by_index(2).ok_or("Missing track 3")?;
-        let send = track_1.send_by_target_track(track_3);
+        let send = track_1
+            .find_send_by_destination_track(&track_3)
+            .ok_or("missing send")?;
         // When
         let (mock, _) = observe_invocations(|mock| {
             Test::control_surface_rx()
-                .track_send_pan_changed()
-                .take_until(step.finished)
+                .track_route_pan_changed()
+                .take_until(step.finished.clone())
                 .subscribe(move |t| {
                     mock.invoke(t);
                 });
         });
-        send.set_pan(Pan::from_normalized_value(0.25));
+        send.set_pan(Pan::from_normalized_value(0.25)).unwrap();
         // Then
         assert_eq!(send.pan().reaper_value(), ReaperPanValue::new(-0.5));
         assert_eq!(send.pan().normalized_value(), 0.25);
-        assert_eq!(mock.invocation_count(), 1);
-        assert_eq!(mock.last_arg(), send);
+        assert_eq!(mock.invocation_count(), 2);
+        Ok(())
+    })
+}
+
+fn set_track_send_mute() -> TestStep {
+    step(AllVersions, "Mute track send", |_, _| {
+        // Given
+        let project = Reaper::get().current_project();
+        let track_1 = project.track_by_index(0).ok_or("Missing track 1")?;
+        let track_3 = project.track_by_index(2).ok_or("Missing track 3")?;
+        let send = track_1
+            .find_send_by_destination_track(&track_3)
+            .ok_or("missing send")?;
+        // When
+        send.mute();
+        // Then
+        assert!(send.is_muted());
+        // When
+        send.mute();
+        // Then
+        assert!(send.is_muted());
         Ok(())
     })
 }
@@ -770,25 +863,27 @@ fn set_track_send_volume() -> TestStep {
         let project = Reaper::get().current_project();
         let track_1 = project.track_by_index(0).ok_or("Missing track 1")?;
         let track_3 = project.track_by_index(2).ok_or("Missing track 3")?;
-        let send = track_1.send_by_target_track(track_3);
+        let send = track_1
+            .find_send_by_destination_track(&track_3)
+            .ok_or("missing send")?;
         // When
         let (mock, _) = observe_invocations(|mock| {
             Test::control_surface_rx()
-                .track_send_volume_changed()
-                .take_until(step.finished)
+                .track_route_volume_changed()
+                .take_until(step.finished.clone())
                 .subscribe(move |t| {
                     mock.invoke(t);
                 });
         });
-        send.set_volume(Volume::from_soft_normalized_value(0.25));
+        send.set_volume(Volume::try_from_soft_normalized_value(0.25).unwrap())
+            .unwrap();
         // Then
         assert!(abs_diff_eq!(
             send.volume().db().get(),
             -30.009_531_739_774_296,
             epsilon = 0.000_000_000_000_1
         ));
-        assert_eq!(mock.invocation_count(), 1);
-        assert_eq!(mock.last_arg(), send);
+        assert_eq!(mock.invocation_count(), 2);
         Ok(())
     })
 }
@@ -801,55 +896,151 @@ fn query_track_send() -> TestStep {
         let track_2 = project.track_by_index(1).ok_or("Missing track 2")?;
         let track_3 = project.add_track();
         // When
-        let send_to_track_2 = track_1.send_by_target_track(track_2.clone());
-        let send_to_track_3 = track_1.add_send_to(track_3.clone());
+        let send_to_track_2 = track_1
+            .find_send_by_destination_track(&track_2)
+            .ok_or("missing send")?;
+        let send_to_track_3 = track_1.add_send_to(&track_3);
         // Then
         assert!(send_to_track_2.is_available());
         assert!(send_to_track_3.is_available());
         assert_eq!(send_to_track_2.index(), 0);
         assert_eq!(send_to_track_3.index(), 1);
-        assert_eq!(send_to_track_2.source_track(), &track_1);
-        assert_eq!(send_to_track_3.source_track(), &track_1);
-        assert_eq!(send_to_track_2.target_track(), track_2);
+        assert_eq!(send_to_track_2.track(), &track_1);
+        assert_eq!(send_to_track_3.track(), &track_1);
+        assert_eq!(
+            send_to_track_2.partner(),
+            Some(TrackRoutePartner::Track(track_2))
+        );
         assert_eq!(send_to_track_2.name().to_str(), "Track 2");
-        assert_eq!(send_to_track_3.target_track(), track_3);
+        assert_eq!(
+            send_to_track_3.partner(),
+            Some(TrackRoutePartner::Track(track_3))
+        );
         assert_eq!(send_to_track_2.volume().db(), Db::ZERO_DB);
         assert_eq!(send_to_track_3.volume().db(), Db::ZERO_DB);
+        assert!(!send_to_track_2.is_muted());
+        assert!(!send_to_track_3.is_muted());
         Ok(())
     })
 }
 
 fn add_track_send() -> TestStep {
-    step(AllVersions, "Add track send", |_session, _| {
+    step(AllVersions, "Add track send", |_session, step| {
         // Given
         let project = Reaper::get().current_project();
         let track_1 = project.track_by_index(0).ok_or("Missing track 1")?;
         let track_2 = project.track_by_index(1).ok_or("Missing track 2")?;
         // When
-        let send = track_1.add_send_to(track_2.clone());
+        let (send_mock, _) = observe_invocations(|mock| {
+            Test::control_surface_rx()
+                .track_send_count_changed()
+                .take_until(step.finished.clone())
+                .subscribe(move |t| {
+                    mock.invoke(t);
+                });
+        });
+        let (receive_mock, _) = observe_invocations(|mock| {
+            Test::control_surface_rx()
+                .receive_count_changed()
+                .take_until(step.finished.clone())
+                .subscribe(move |t| {
+                    mock.invoke(t);
+                });
+        });
+        let send = track_1.add_send_to(&track_2);
         // Then
         assert_eq!(track_1.send_count(), 1);
-        assert_eq!(track_1.send_by_index(0), Some(send));
-        assert!(track_1.send_by_target_track(track_2.clone()).is_available());
-        assert!(!track_2.send_by_target_track(track_1.clone()).is_available());
-        assert!(track_1.index_based_send_by_index(0).is_available());
+        assert_eq!(track_1.typed_send_count(SendPartnerType::Track), 1);
+        assert_eq!(track_1.typed_send_count(SendPartnerType::HardwareOutput), 0);
+        assert_eq!(track_1.receive_count(), 0);
+        assert_eq!(track_2.receive_count(), 1);
+        assert_eq!(track_1.send_by_index(0).unwrap(), send);
+        assert_eq!(
+            track_1
+                .typed_send_by_index(SendPartnerType::Track, 0)
+                .unwrap(),
+            send
+        );
+        assert_eq!(
+            track_1.typed_send_by_index(SendPartnerType::HardwareOutput, 0),
+            None
+        );
+        assert_eq!(track_1.receive_by_index(0), None);
+        assert!(track_2.receive_by_index(0).unwrap().is_available());
+        assert!(
+            track_1
+                .find_send_by_destination_track(&track_2)
+                .ok_or("missing send")?
+                .is_available()
+        );
+        assert!(track_2.find_send_by_destination_track(&track_1).is_none());
+        assert!(
+            track_2
+                .find_receive_by_source_track(&track_1)
+                .ok_or("missing receive")?
+                .is_available()
+        );
+        assert!(track_1.find_receive_by_source_track(&track_2).is_none());
         assert_eq!(track_1.sends().count(), 1);
+        assert_eq!(track_2.sends().count(), 0);
+        assert_eq!(track_1.typed_sends(SendPartnerType::Track).count(), 1);
+        assert_eq!(
+            track_1.typed_sends(SendPartnerType::HardwareOutput).count(),
+            0
+        );
+        assert_eq!(track_2.receives().count(), 1);
+        assert_eq!(track_1.receives().count(), 0);
+        assert_eq!(send_mock.invocation_count(), 1);
+        assert_eq!(send_mock.last_arg(), track_1);
+        assert_eq!(receive_mock.invocation_count(), 1);
+        assert_eq!(receive_mock.last_arg(), track_2);
         Ok(())
     })
 }
 
-fn query_track_send_count() -> TestStep {
-    step(AllVersions, "Query track send count", |_, _| {
+fn query_track_route_count() -> TestStep {
+    step(AllVersions, "Query track route count", |_, _| {
         // Given
         let track = get_track(0)?;
         // When
-        let send_count = track.send_count();
+        let track_send_count = track.typed_send_count(SendPartnerType::Track);
+        let hw_output_send_count = track.typed_send_count(SendPartnerType::HardwareOutput);
+        let receive_count = track.receive_count();
         // Then
-        assert_eq!(send_count, 0);
+        assert_eq!(track_send_count, 0);
+        assert_eq!(hw_output_send_count, 0);
+        assert_eq!(receive_count, 0);
+        assert!(
+            track
+                .typed_send_by_index(SendPartnerType::Track, 0)
+                .is_none()
+        );
+        assert!(
+            track
+                .typed_send_by_index(SendPartnerType::HardwareOutput, 0)
+                .is_none()
+        );
+        assert!(track.receive_by_index(0).is_none());
+        assert!(track.find_send_by_destination_track(&track).is_none());
         assert!(track.send_by_index(0).is_none());
-        assert!(!track.send_by_target_track(track.clone()).is_available());
-        assert!(!track.index_based_send_by_index(0).is_available());
+        assert!(
+            track
+                .typed_send_by_index(SendPartnerType::Track, 0)
+                .is_none()
+        );
+        assert!(
+            track
+                .typed_send_by_index(SendPartnerType::HardwareOutput, 0)
+                .is_none()
+        );
+        assert!(track.receive_by_index(0).is_none());
         assert_eq!(track.sends().count(), 0);
+        assert_eq!(track.typed_sends(SendPartnerType::Track).count(), 0);
+        assert_eq!(
+            track.typed_sends(SendPartnerType::HardwareOutput).count(),
+            0
+        );
+        assert_eq!(track.receives().count(), 0);
         Ok(())
     })
 }
@@ -972,7 +1163,7 @@ fn arm_track_in_auto_arm_mode_ignoring_auto_arm() -> TestStep {
         |_, step| {
             // Given
             let track = get_track(0)?;
-            track.enable_auto_arm();
+            track.enable_auto_arm()?;
             assert!(track.has_auto_arm_enabled());
             assert!(!track.is_armed(true));
             // When
@@ -1033,7 +1224,7 @@ fn switch_track_to_auto_arm_mode_while_armed() -> TestStep {
             let track = get_track(0)?;
             track.unselect();
             // When
-            track.enable_auto_arm();
+            track.enable_auto_arm()?;
             // Then
             assert!(track.has_auto_arm_enabled());
             assert!(track.is_armed(true));
@@ -1053,7 +1244,7 @@ fn switch_to_normal_track_mode_while_armed() -> TestStep {
             track.arm(true);
             assert!(track.is_armed(true));
             // When
-            track.disable_auto_arm();
+            track.disable_auto_arm()?;
             // Then
             assert!(!track.has_auto_arm_enabled());
             assert!(track.is_armed(true));
@@ -1068,7 +1259,7 @@ fn disable_track_auto_arm_mode() -> TestStep {
         // Given
         let track = get_track(0)?;
         // When
-        track.disable_auto_arm();
+        track.disable_auto_arm()?;
         // Then
         assert!(!track.has_auto_arm_enabled());
         assert!(!track.is_armed(true));
@@ -1133,7 +1324,7 @@ fn enable_track_in_auto_arm_mode() -> TestStep {
         // Given
         let track = get_track(0)?;
         // When
-        track.enable_auto_arm();
+        track.enable_auto_arm()?;
         // Then
         assert!(track.has_auto_arm_enabled());
         assert!(!track.is_armed(true));
@@ -1249,7 +1440,7 @@ fn select_master_track() -> TestStep {
             1
         );
         assert_eq!(mock.invocation_count(), 2);
-        assert_eq!(mock.last_arg().index(), None);
+        assert_eq!(mock.last_arg().0.index(), None);
         Ok(())
     })
 }
@@ -1286,7 +1477,7 @@ fn unselect_track() -> TestStep {
             1
         );
         assert_eq!(mock.invocation_count(), 1);
-        assert_eq!(mock.last_arg(), track);
+        assert_eq!(mock.last_arg().0, track);
         Ok(())
     })
 }
@@ -1326,7 +1517,7 @@ fn select_track() -> TestStep {
             2
         );
         assert_eq!(mock.invocation_count(), 2);
-        assert_eq!(mock.last_arg(), track2);
+        assert_eq!(mock.last_arg().0, track2);
         Ok(())
     })
 }
@@ -1375,6 +1566,30 @@ fn set_track_pan() -> TestStep {
     })
 }
 
+fn set_track_width() -> TestStep {
+    step(AllVersions, "Set track width", |_, step| {
+        // Given
+        let track = get_track(0)?;
+        // When
+        let (mock, _) = observe_invocations(|mock| {
+            Test::control_surface_rx()
+                .track_pan_changed()
+                .take_until(step.finished)
+                .subscribe(move |t| {
+                    mock.invoke(t);
+                });
+        });
+        track.set_width(Width::from_normalized_value(0.25));
+        // Then
+        let width = track.width();
+        assert_eq!(width.reaper_value(), ReaperWidthValue::new(-0.5));
+        assert_eq!(width.normalized_value(), 0.25);
+        assert_eq!(mock.invocation_count(), 1);
+        assert_eq!(mock.last_arg(), track);
+        Ok(())
+    })
+}
+
 fn disable_all_track_fx() -> TestStep {
     step(AllVersions, "Disable all track FX", |_, _| {
         // Given
@@ -1413,6 +1628,19 @@ fn query_track_pan() -> TestStep {
     })
 }
 
+fn query_track_width() -> TestStep {
+    step(AllVersions, "Query track width", |_, _| {
+        // Given
+        let track = get_track(0)?;
+        // When
+        let width = track.width();
+        // Then
+        assert_eq!(width.reaper_value(), ReaperWidthValue::MAX);
+        assert_eq!(width.normalized_value(), 1.0);
+        Ok(())
+    })
+}
+
 fn set_track_volume() -> TestStep {
     step(AllVersions, "Set track volume", |_, step| {
         // Given
@@ -1426,7 +1654,7 @@ fn set_track_volume() -> TestStep {
                     mock.invoke(t);
                 });
         });
-        track.set_volume(Volume::from_soft_normalized_value(0.25));
+        track.set_volume(Volume::try_from_soft_normalized_value(0.25).unwrap());
         // Then
         let volume = track.volume();
         assert!(abs_diff_eq!(
@@ -1608,7 +1836,7 @@ fn set_track_recording_input_midi_all_all() -> TestStep {
             assert_eq!(input, given_input);
             let input = input.unwrap();
             assert_eq!(input.to_raw(), 6112);
-            assert_eq!(RecordingInput::try_from_raw(6112), Ok(input));
+            assert_eq!(RecordingInput::from_raw(6112), input);
             // TODO-high Search in project for 5198273 for a hacky way to solve this
             assert_eq!(mock.invocation_count(), 0);
             // assert_eq!(mock.last_arg(), track);
@@ -1966,6 +2194,49 @@ fn general() -> TestStep {
     })
 }
 
+fn volume_types() -> TestStep {
+    step(AllVersions, "Volume types", |reaper, _| {
+        // Given
+        let input_values = vec![
+            0.0,
+            0.00000000000001,
+            0.2,
+            0.5,
+            0.9,
+            1.0,
+            1.0000001,
+            1.5,
+            2.0,
+            12.0,
+            20.0,
+            100_000.0,
+            std::f64::NAN,
+            // std::f64::MIN,
+            std::f64::MAX,
+            std::f64::EPSILON,
+            std::f64::INFINITY,
+            /* std::f64::MIN_POSITIVE,
+             * std::f64::NEG_INFINITY, */
+        ]
+        .into_iter()
+        .map(ReaperVolumeValue::new)
+        .chain(vec![
+            ReaperVolumeValue::MIN,
+            ReaperVolumeValue::MINUS_150_DB,
+            ReaperVolumeValue::NAN,
+            ReaperVolumeValue::TWELVE_DB,
+            ReaperVolumeValue::ZERO_DB,
+        ]);
+        // When
+        // Then
+        for input_value in input_values {
+            let output_value = Volume::from_reaper_value(input_value);
+            reaper.show_console_msg(format!("{:?} => {:?}\n", input_value, output_value));
+        }
+        Ok(())
+    })
+}
+
 fn create_empty_project_in_new_tab() -> TestStep {
     step(AllVersions, "Create empty project in new tab", |_, step| {
         // Given
@@ -1998,7 +2269,8 @@ fn create_empty_project_in_new_tab() -> TestStep {
         // projectCountBefore + 1);
         assert_eq!(new_project.track_count(), 0);
         assert!(new_project.index() > 0);
-        assert!(new_project.file_path().is_none());
+        assert!(new_project.file().is_none());
+        assert_eq!(new_project.length(), DurationInSeconds::new(0.0));
         assert_eq!(mock.invocation_count(), 1);
         assert_eq!(mock.last_arg(), new_project);
         Ok(())
@@ -2011,6 +2283,37 @@ fn strings() -> TestStep {
         Reaper::get().show_console_msg(reaper_str!("- &ReaperStr: 范例文字äöüß\n"));
         Reaper::get().show_console_msg("- &str: 范例文字äöüß\n");
         Reaper::get().show_console_msg(String::from("- String: 范例文字äöüß\n"));
+        Ok(())
+    })
+}
+
+fn query_prefs() -> TestStep {
+    step(AllVersions, "Query preferences", |_, _| {
+        fn query_track_sel_on_mouse_is_enabled() -> bool {
+            if let Some(res) = Reaper::get()
+                .medium_reaper()
+                .get_config_var("trackselonmouse")
+            {
+                if res.size != 4 {
+                    // Shouldn't be.
+                    return false;
+                }
+                let ptr = res.value.as_ptr() as *const u32;
+                let value = unsafe { *ptr };
+                // The second flag corresponds to that setting.
+                (value & 2) != 0
+            } else {
+                false
+            }
+        }
+        // When
+        let is_enabled = query_track_sel_on_mouse_is_enabled();
+        // Then
+        if is_enabled {
+            return Err(
+                "\"Mouse click on volume/pan faders and track buttons changes track selection\" seems to be enabled. Maybe you are not using the REAPER default preferences?".into(),
+            );
+        }
         Ok(())
     })
 }
@@ -2192,7 +2495,7 @@ fn query_fx_chain(get_fx_chain: GetFxChain) -> TestStep {
                 .is_available()
         );
         assert!(fx_chain.first_fx_by_name("bla").is_none());
-        assert!(fx_chain.chunk().is_none());
+        assert!(fx_chain.chunk().unwrap().is_none());
         Ok(())
     })
 }
@@ -2255,17 +2558,17 @@ fn query_track_js_fx_by_index(get_fx_chain: GetFxChain) -> TestStep {
             );
             assert!(fx.guid().is_some());
             assert_eq!(fx.name().into_inner().as_c_str(), c_str!("JS: phaser"));
-            let fx_chunk = fx.chunk();
+            let fx_chunk = fx.chunk()?;
             assert!(fx_chunk.starts_with("BYPASS 0 0 0"));
             if Reaper::get().version() < ReaperVersion::new("6") {
                 assert!(fx_chunk.ends_with("\nWAK 0"));
             } else {
                 assert!(fx_chunk.ends_with("\nWAK 0 0"));
             }
-            let tag_chunk = fx.tag_chunk();
+            let tag_chunk = fx.tag_chunk()?;
             assert!(tag_chunk.starts_with(r#"<JS phaser """#));
             assert!(tag_chunk.ends_with("\n>"));
-            let state_chunk = fx.state_chunk();
+            let state_chunk = fx.state_chunk()?;
             assert!(!state_chunk.contains("<"));
             assert!(!state_chunk.contains(">"));
             assert_eq!(fx.track(), track);
@@ -2287,7 +2590,7 @@ fn query_track_js_fx_by_index(get_fx_chain: GetFxChain) -> TestStep {
             );
             assert!(fx.parameter_by_index(6).is_available());
             assert!(!fx.parameter_by_index(7).is_available());
-            let fx_info = fx.info();
+            let fx_info = fx.info()?;
             let stem = fx_info.file_name.file_stem().ok_or("No stem")?;
             assert_eq!(stem, "phaser");
             Ok(())
@@ -2453,7 +2756,7 @@ WAK 0
 "#
         );
         // When
-        other_fx_chain.set_chunk(fx_chain_chunk.as_str());
+        other_fx_chain.set_chunk(fx_chain_chunk.as_str())?;
         // Then
         assert_eq!(other_fx_chain.fx_count(), 2);
         assert_eq!(fx_chain.fx_count(), 2);
@@ -2479,7 +2782,7 @@ fn set_fx_state_chunk(get_fx_chain: GetFxChain) -> TestStep {
   776t3g3wrd6mm8Q7F7fROgAAAAAAAAAAAAAAAM5NAD/pZ4g9AAAAAAAAAD8AAIA/AACAPwAAAD8AAAAA
   AAAQAAAA"#;
         // When
-        synth_fx.set_state_chunk(fx_state_chunk);
+        synth_fx.set_state_chunk(fx_state_chunk)?;
         // Then
         assert_eq!(synth_fx.index(), 1);
         assert_eq!(
@@ -2511,7 +2814,7 @@ fn set_fx_tag_chunk(get_fx_chain: GetFxChain) -> TestStep {
   AAAQAAAA
   >"#;
         // When
-        midi_fx_2.set_tag_chunk(fx_tag_chunk);
+        midi_fx_2.set_tag_chunk(fx_tag_chunk)?;
         // Then
         assert_eq!(midi_fx_2.index(), 1);
         assert_eq!(
@@ -2535,7 +2838,7 @@ fn set_fx_chunk(get_fx_chain: GetFxChain) -> TestStep {
         let synth_fx = fx_chain.fx_by_index(1).ok_or("Couldn't find synth fx")?;
         let synth_fx_guid_before = synth_fx.guid();
         // When
-        synth_fx.set_chunk(midi_fx.chunk());
+        synth_fx.set_chunk(midi_fx.chunk()?)?;
         // Then
         assert_eq!(synth_fx.guid(), synth_fx_guid_before);
         assert!(synth_fx.is_available());
@@ -2572,9 +2875,8 @@ WAK 0
                     mock.invoke(fx);
                 });
         });
-        let synth_fx = fx_chain.add_fx_from_chunk(fx_chunk);
+        let synth_fx = fx_chain.add_fx_from_chunk(fx_chunk)?;
         // Then
-        let synth_fx = synth_fx.ok_or("Didn't return FX")?;
         assert_eq!(synth_fx.index(), 1);
         let guid = Guid::from_string_with_braces("{5FF5FB09-9102-4CBA-A3FB-3467BA1BFE5D}")?;
         assert_eq!(synth_fx.guid(), Some(guid));
@@ -2608,7 +2910,7 @@ fn remove_fx(get_fx_chain: GetFxChain) -> TestStep {
                     mock.invoke(p);
                 });
         });
-        fx_chain.remove_fx(&synth_fx);
+        fx_chain.remove_fx(&synth_fx)?;
         // Then
         assert!(!synth_fx.is_available());
         assert!(midi_fx.is_available());
@@ -2636,7 +2938,7 @@ fn move_fx(get_fx_chain: GetFxChain) -> TestStep {
                     mock.invoke(p);
                 });
         });
-        fx_chain.move_fx(&synth_fx, 0);
+        fx_chain.move_fx(&synth_fx, 0)?;
         // Then
         assert_eq!(midi_fx.index(), 1);
         assert_eq!(
@@ -2891,21 +3193,21 @@ fn check_track_fx_with_2_fx(get_fx_chain: GetFxChain) -> TestStep {
                 fx_2.name().into_inner().as_c_str(),
                 c_str!("VSTi: ReaSynth (Cockos)")
             );
-            let chunk_1 = fx_1.chunk();
+            let chunk_1 = fx_1.chunk()?;
             assert!(chunk_1.starts_with("BYPASS 0 0 0"));
             if Reaper::get().version() < ReaperVersion::new("6") {
                 assert!(chunk_1.ends_with("\nWAK 0"));
             } else {
                 assert!(chunk_1.ends_with("\nWAK 0 0"));
             }
-            let tag_chunk_1 = fx_1.tag_chunk();
+            let tag_chunk_1 = fx_1.tag_chunk()?;
             assert!(tag_chunk_1.starts_with(r#"<VST "VST: ReaControlMIDI (Cockos)" reacontrol"#));
             assert!(tag_chunk_1.ends_with("\n>"));
-            let state_chunk_1 = fx_1.state_chunk();
+            let state_chunk_1 = fx_1.state_chunk()?;
             assert!(!state_chunk_1.contains("<"));
             assert!(!state_chunk_1.contains(">"));
-            let fx_1_info = fx_1.info();
-            let fx_2_info = fx_2.info();
+            let fx_1_info = fx_1.info()?;
+            let fx_2_info = fx_2.info()?;
             let fx_1_file_name = fx_1_info
                 .file_name
                 .file_name()
@@ -3058,21 +3360,21 @@ fn check_track_fx_with_1_fx(get_fx_chain: GetFxChain) -> TestStep {
                 fx_1.name().into_inner().as_c_str(),
                 c_str!("VST: ReaControlMIDI (Cockos)")
             );
-            let chunk = fx_1.chunk();
+            let chunk = fx_1.chunk()?;
             assert!(chunk.starts_with("BYPASS 0 0 0"));
             if Reaper::get().version() < ReaperVersion::new("6") {
                 assert!(chunk.ends_with("\nWAK 0"));
             } else {
                 assert!(chunk.ends_with("\nWAK 0 0"));
             }
-            let tag_chunk = fx_1.tag_chunk();
+            let tag_chunk = fx_1.tag_chunk()?;
             assert!(tag_chunk.starts_with(r#"<VST "VST: ReaControlMIDI (Cockos)" reacontrol"#));
             assert!(tag_chunk.ends_with("\n>"));
-            let state_chunk = fx_1.state_chunk();
+            let state_chunk = fx_1.state_chunk()?;
             assert!(!state_chunk.contains("<"));
             assert!(!state_chunk.contains(">"));
 
-            let fx_1_info = fx_1.info();
+            let fx_1_info = fx_1.info()?;
             let file_name = fx_1_info.file_name.file_name().ok_or("No FX file name")?;
             assert!(matches!(
                 file_name
@@ -3082,8 +3384,7 @@ fn check_track_fx_with_1_fx(get_fx_chain: GetFxChain) -> TestStep {
             ));
             assert_eq!(fx_1_info.type_expression, "VST");
             assert_eq!(fx_1_info.sub_type_expression, "VST");
-            assert_eq!(fx_1_info.effect_name, "ReaControlMIDI");
-            assert_eq!(fx_1_info.vendor_name, "Cockos");
+            assert_eq!(fx_1_info.effect_name, "ReaControlMIDI (Cockos)");
 
             assert_eq!(fx_1.track(), track);
             assert_eq!(fx_1.is_input_fx(), fx_chain.is_input_fx());
@@ -3146,7 +3447,7 @@ fn add_track_fx_by_original_name(get_fx_chain: GetFxChain) -> TestStep {
                 fx_chain.first_fx_by_name("ReaControlMIDI (Cockos)"),
                 Some(fx.clone())
             );
-            let chain_chunk = fx_chain.chunk();
+            let chain_chunk = fx_chain.chunk()?;
             assert!(chain_chunk.is_some());
             let chain_chunk = chain_chunk.unwrap();
             assert!(chain_chunk.starts_with("<FXCHAIN"));

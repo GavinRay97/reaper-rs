@@ -1,13 +1,14 @@
 use crate::{
-    CommandId, Hwnd, KbdSectionInfo, MediaTrack, MidiFrameOffset, MidiOutputDeviceId, ReaProject,
-    ReaperStr, ReaperStringArg, TryFromRawError,
+    BookmarkId, CommandId, Hidden, Hwnd, KbdSectionInfo, MediaTrack, MidiFrameOffset,
+    MidiOutputDeviceId, ReaProject, ReaperPanValue, ReaperStr, ReaperStringArg, ReaperWidthValue,
 };
 
 use crate::util::concat_reaper_strs;
 use helgoboss_midi::{U14, U7};
 use reaper_low::raw;
 use std::borrow::Cow;
-use std::convert::TryInto;
+use std::convert::TryFrom;
+use std::num::NonZeroU32;
 use std::os::raw::{c_char, c_void};
 use std::ptr::{null_mut, NonNull};
 
@@ -41,6 +42,27 @@ pub enum TrackFxChainType {
     InputFxChain,
 }
 
+/// Describes which kind of time range we are talking about in a REAPER project.
+///
+/// They are linked by default in REAPER so users might not even be aware that there's a
+/// difference, but there is.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum TimeRangeType {
+    /// The loop points (displayed in the ruler).
+    LoopPoints,
+    /// The time selection (visualized with different background color in the arrange view).
+    TimeSelection,
+}
+
+/// Describes whether to allow auto-seek or not.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum AutoSeekBehavior {
+    /// Prevents auto-seek from happening when setting loop points.
+    DenyAutoSeek,
+    /// Allows auto-seek to happen when setting loop points.
+    AllowAutoSeek,
+}
+
 /// Determines how to deal with the master track.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum MasterTrackBehavior {
@@ -48,6 +70,29 @@ pub enum MasterTrackBehavior {
     ExcludeMasterTrack,
     /// With master track.
     IncludeMasterTrack,
+}
+
+/// Something which refers to a certain marker or region.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum BookmarkRef {
+    /// Counts only regions or only markers depending on the usage context.
+    Position(NonZeroU32),
+    /// Relates only to regions or only to markers depending on the usage context.
+    Id(BookmarkId),
+}
+
+impl BookmarkRef {
+    pub(crate) fn to_raw(self) -> i32 {
+        use BookmarkRef::*;
+        match self {
+            Position(i) => i.get() as _,
+            Id(id) => id.get() as _,
+        }
+    }
+
+    pub(crate) fn uses_timeline_order(&self) -> bool {
+        matches!(self, BookmarkRef::Position(_))
+    }
 }
 
 /// A performance/caching hint which determines how REAPER internally gets or sets a chunk.
@@ -107,6 +152,15 @@ pub enum UndoBehavior {
     AddUndoPoint,
 }
 
+/// Determines whether to import MIDI as in-project MIDI events or not.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum MidiImportBehavior {
+    /// Uses the relevant REAPER preference.
+    UsePreference,
+    /// Makes sure the MIDI data is not imported as in-project MIDI events.
+    ForceNoMidiImport,
+}
+
 /// Determines whether to copy or move something (e.g. an FX).
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum TransferBehavior {
@@ -156,11 +210,31 @@ impl RecordArmMode {
     }
 }
 
+/// Defines whether to align with measure starts when playing previews.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum MeasureAlignment {
+    /// Plays immediately.
+    PlayImmediately,
+    /// Aligns playback with measure start.
+    AlignWithMeasureStart,
+}
+
+impl MeasureAlignment {
+    /// Converts this value to an integer as expected by the low-level API.
+    pub fn to_raw(self) -> f64 {
+        use MeasureAlignment::*;
+        match self {
+            PlayImmediately => -1.0,
+            AlignWithMeasureStart => 1.0,
+        }
+    }
+}
+
 /// Determines if and how to show/hide a FX user interface.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum FxShowInstruction {
     /// Closes the complete FX chain.
-    HideChain,
+    HideChain(TrackFxChainType),
     /// Shows the complete FX chain and makes the given FX visible.
     ShowChain(TrackFxLocation),
     /// Closes the floating FX window.
@@ -175,7 +249,7 @@ impl FxShowInstruction {
     pub fn instruction_to_raw(&self) -> i32 {
         use FxShowInstruction::*;
         match self {
-            HideChain => 0,
+            HideChain(_) => 0,
             ShowChain(_) => 1,
             HideFloatingWindow(_) => 2,
             ShowFloatingWindow(_) => 3,
@@ -186,7 +260,13 @@ impl FxShowInstruction {
     pub fn location_to_raw(&self) -> i32 {
         use FxShowInstruction::*;
         match self {
-            HideChain => 0,
+            HideChain(t) => {
+                let dummy_location = match t {
+                    TrackFxChainType::NormalFxChain => TrackFxLocation::NormalFxChain(0),
+                    TrackFxChainType::InputFxChain => TrackFxLocation::InputFxChain(0),
+                };
+                dummy_location.to_raw()
+            }
             ShowChain(l) => l.to_raw(),
             HideFloatingWindow(l) => l.to_raw(),
             ShowFloatingWindow(l) => l.to_raw(),
@@ -203,14 +283,14 @@ pub enum TrackSendDirection {
     Send,
 }
 
-/// Defines the kind of link.
+/// Defines the kind of route.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum TrackSendCategory {
     /// A receive from another track (a send from that other track's perspective).
     Receive = -1,
     /// A send to another track (a receive from that other track's perspective).
     Send = 0,
-    /// A hardware output.
+    /// A send to a hardware output.
     HardwareOutput = 1,
 }
 
@@ -226,12 +306,57 @@ impl TrackSendCategory {
     }
 }
 
+/// Defines an edit mode for changing send volume or pan.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum EditMode {
+    /// An instant edit such as reset via double-clicking a fader or typing a value in an edit
+    /// field.
+    InstantEdit = -1,
+    /// A normal tweak just like when dragging the mouse.
+    NormalTweak = 0,
+    /// Marks the end of an edit (mouse up).
+    EndOfEdit = 1,
+}
+
+impl EditMode {
+    /// Converts this value to an integer as expected by the low-level API.
+    pub fn to_raw(self) -> i32 {
+        use EditMode::*;
+        match self {
+            InstantEdit => -1,
+            NormalTweak => 0,
+            EndOfEdit => 1,
+        }
+    }
+}
+
 impl From<TrackSendDirection> for TrackSendCategory {
     fn from(v: TrackSendDirection) -> TrackSendCategory {
         use TrackSendDirection::*;
         match v {
             Receive => TrackSendCategory::Receive,
             Send => TrackSendCategory::Send,
+        }
+    }
+}
+
+/// Reference to a track send, hardware output send or track receive.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum TrackSendRef {
+    /// A receive from another track (a send from that other track's perspective).
+    Receive(u32),
+    /// A send to another track (a receive from that other track's perspective) or a send to a
+    /// hardware output.
+    Send(u32),
+}
+
+impl TrackSendRef {
+    /// Converts this value to an integer as expected by the low-level API.
+    pub fn to_raw(self) -> i32 {
+        use TrackSendRef::*;
+        match self {
+            Receive(i) => -((i + 1) as i32),
+            Send(i) => i as _,
         }
     }
 }
@@ -275,21 +400,24 @@ pub enum TrackFxLocation {
     ///
     /// On the master track (if applicable) this represents an index in the monitoring FX chain.
     InputFxChain(u32),
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a variant
+    /// that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<i32>),
 }
 
 impl TrackFxLocation {
     /// Converts an integer as returned by the low-level API to a track FX location.
-    pub fn try_from_raw(v: i32) -> Result<TrackFxLocation, TryFromRawError<i32>> {
+    pub fn from_raw(v: i32) -> TrackFxLocation {
         use TrackFxLocation::*;
-        let v: u32 = v
-            .try_into()
-            .map_err(|_| TryFromRawError::new("FX index shouldn't be negative", v))?;
-        let result = if v >= 0x0100_0000 {
-            InputFxChain(v - 0x0100_0000)
+        if let Ok(v) = u32::try_from(v) {
+            if v >= 0x0100_0000 {
+                InputFxChain(v - 0x0100_0000)
+            } else {
+                NormalFxChain(v)
+            }
         } else {
-            NormalFxChain(v)
-        };
-        Ok(result)
+            Unknown(Hidden(v))
+        }
     }
 
     /// Converts this value to an integer as expected by the low-level API.
@@ -298,6 +426,7 @@ impl TrackFxLocation {
         let positive = match self {
             InputFxChain(idx) => 0x0100_0000 + idx,
             NormalFxChain(idx) => idx,
+            Unknown(Hidden(x)) => return x,
         };
         positive as i32
     }
@@ -351,6 +480,9 @@ pub enum ActionValueChange {
     /// - 65 → -1
     /// - 1 → +1
     Relative3(U7),
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a variant
+    /// that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<(i32, i32, i32)>),
 }
 
 impl ActionValueChange {
@@ -367,41 +499,36 @@ impl ActionValueChange {
             Relative1(v) => (i32::from(v), -1, 1),
             Relative2(v) => (i32::from(v), -1, 2),
             Relative3(v) => (i32::from(v), -1, 3),
+            Unknown(Hidden((a, b, c))) => (a, b, c),
         }
     }
 
     /// Converts the given low-level API values to this action value change if possible.
-    pub(crate) fn try_from_raw(
-        raw: (i32, i32, i32),
-    ) -> Result<ActionValueChange, TryFromRawError<(i32, i32, i32)>> {
+    pub(crate) fn from_raw(raw: (i32, i32, i32)) -> ActionValueChange {
         let (val, valhw, relmode) = raw;
-        let val: U7 = val
-            .try_into()
-            .map_err(|_| TryFromRawError::new("val must be 7-bit", raw))?;
         use ActionValueChange::*;
-        let change = match (valhw, relmode) {
-            (-1, 0) | (-1, 1) | (-1, 2) | (-1, 3) => match relmode {
-                0 => AbsoluteLowRes(val),
-                1 => Relative1(val),
-                2 => Relative2(val),
-                3 => Relative3(val),
-                _ => unreachable!(),
-            },
-            (valhw, 0) if valhw >= 0 => {
-                let valhw: U7 = valhw
-                    .try_into()
-                    .map_err(|_| TryFromRawError::new("valhw must be 7-bit", raw))?;
-                let combined = (valhw.get() << 7) | val.get();
-                AbsoluteHighRes(combined.into())
+        if let Ok(val) = U7::try_from(val) {
+            match (valhw, relmode) {
+                (-1, 0) | (-1, 1) | (-1, 2) | (-1, 3) => match relmode {
+                    0 => AbsoluteLowRes(val),
+                    1 => Relative1(val),
+                    2 => Relative2(val),
+                    3 => Relative3(val),
+                    _ => Unknown(Hidden((raw.0, raw.1, raw.2))),
+                },
+                (valhw, 0) if valhw >= 0 => {
+                    if let Ok(valhw) = U7::try_from(valhw) {
+                        let combined = (valhw.get() << 7) | val.get();
+                        AbsoluteHighRes(combined.into())
+                    } else {
+                        Unknown(Hidden((raw.0, raw.1, raw.2)))
+                    }
+                }
+                _ => Unknown(Hidden((raw.0, raw.1, raw.2))),
             }
-            _ => {
-                return Err(TryFromRawError::new(
-                    "invalid valhw/relmode combination",
-                    raw,
-                ));
-            }
-        };
-        Ok(change)
+        } else {
+            Unknown(Hidden((raw.0, raw.1, raw.2)))
+        }
     }
 }
 
@@ -662,20 +789,20 @@ pub enum InputMonitoringMode {
     Normal,
     /// Monitoring only happens when playing (tape style).
     NotWhenPlaying,
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a variant
+    /// that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<i32>),
 }
 
 impl InputMonitoringMode {
     /// Converts an integer as returned by the low-level API to an input monitoring mode.
-    pub fn try_from_raw(v: i32) -> Result<InputMonitoringMode, TryFromRawError<i32>> {
+    pub fn from_raw(v: i32) -> InputMonitoringMode {
         use InputMonitoringMode::*;
         match v {
-            0 => Ok(Off),
-            1 => Ok(Normal),
-            2 => Ok(NotWhenPlaying),
-            _ => Err(TryFromRawError::new(
-                "couldn't convert to input monitoring mode",
-                v,
-            )),
+            0 => Off,
+            1 => Normal,
+            2 => NotWhenPlaying,
+            x => Unknown(Hidden(x)),
         }
     }
 
@@ -686,9 +813,136 @@ impl InputMonitoringMode {
             Off => 0,
             Normal => 1,
             NotWhenPlaying => 2,
+            Unknown(Hidden(x)) => x,
         }
     }
 }
+
+/// Track solo mode.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum SoloMode {
+    Off,
+    SoloIgnoreRouting,
+    SoloInPlace,
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a variant
+    /// that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<i32>),
+}
+
+impl SoloMode {
+    /// Converts an integer as returned by the low-level API to a solo mode.
+    pub fn from_raw(v: i32) -> SoloMode {
+        use SoloMode::*;
+        match v {
+            0 => Off,
+            1 => SoloIgnoreRouting,
+            2 => SoloInPlace,
+            x => Unknown(Hidden(x)),
+        }
+    }
+
+    /// Converts this value to an integer as expected by the low-level API.
+    pub fn to_raw(self) -> i32 {
+        use SoloMode::*;
+        match self {
+            Off => 0,
+            SoloIgnoreRouting => 1,
+            SoloInPlace => 2,
+            Unknown(Hidden(x)) => x,
+        }
+    }
+}
+
+/// Information about visibility of an FX chain.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum FxChainVisibility {
+    /// FX chain is not visible.
+    Hidden,
+    /// FX chain is visible.
+    ///
+    /// If the argument is `Some`, the FX with that index is selected.
+    Visible(Option<u32>),
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a
+    /// variant that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<i32>),
+}
+
+impl FxChainVisibility {
+    /// Converts an integer as returned by the low-level API to an FX chain visibility.
+    pub fn from_raw(v: i32) -> FxChainVisibility {
+        match v {
+            -2 => Self::Visible(None),
+            -1 => Self::Hidden,
+            x if x >= 0 => Self::Visible(Some(x as u32)),
+            x => Self::Unknown(Hidden(x)),
+        }
+    }
+}
+
+/// Track pan mode.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum PanMode {
+    /// Classic v1 - v3.
+    BalanceV1,
+    /// Balance v4+.
+    BalanceV4,
+    /// Stereo pan.
+    StereoPan,
+    /// Dual pan.
+    DualPan,
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a variant
+    /// that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<i32>),
+}
+
+impl PanMode {
+    /// Converts an integer as returned by the low-level API to a pan mode.
+    pub fn from_raw(v: i32) -> PanMode {
+        use PanMode::*;
+        match v {
+            0 => BalanceV1,
+            3 => BalanceV4,
+            5 => StereoPan,
+            6 => DualPan,
+            x => Unknown(Hidden(x)),
+        }
+    }
+
+    /// Converts this value to an integer as expected by the low-level API.
+    pub fn to_raw(self) -> i32 {
+        use PanMode::*;
+        match self {
+            BalanceV1 => 0,
+            BalanceV4 => 3,
+            StereoPan => 5,
+            DualPan => 6,
+            Unknown(Hidden(x)) => x,
+        }
+    }
+}
+
+/// Track pan.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum Pan {
+    /// Classic v1 - v3.
+    BalanceV1(ReaperPanValue),
+    /// Balance v4+.
+    BalanceV4(ReaperPanValue),
+    /// Stereo pan.
+    StereoPan {
+        pan: ReaperPanValue,
+        width: ReaperWidthValue,
+    },
+    /// Dual pan.
+    DualPan {
+        left: ReaperPanValue,
+        right: ReaperPanValue,
+    },
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a variant
+    /// that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<i32>),
+}
+
 /// Something which refers to a certain project.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum ProjectRef {
@@ -894,24 +1148,21 @@ pub enum PromptForActionResult {
     NoneSelected,
     /// Action with the given command ID is selected.
     Selected(CommandId),
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a variant
+    /// that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<i32>),
 }
 
 impl PromptForActionResult {
     /// Converts an integer as returned by the low-level API to this result.
-    pub fn try_from_raw(v: i32) -> Result<PromptForActionResult, TryFromRawError<i32>> {
+    pub fn from_raw(v: i32) -> PromptForActionResult {
         use PromptForActionResult::*;
-        let result = match v {
+        match v {
             0 => NoneSelected,
             id if id > 0 => Selected(CommandId::new(id as u32)),
             -1 => ActionWindowGone,
-            _ => {
-                return Err(TryFromRawError::new(
-                    "invalid prompt-for-action result value",
-                    v,
-                ));
-            }
-        };
-        Ok(result)
+            x => Unknown(Hidden(x)),
+        }
     }
 }
 

@@ -42,3 +42,24 @@ pub enum ProjectPart {
     /// Track/master vol/pan/routing and aLL envelopes (master included).
     TrackCfg = raw::UNDO_STATE_TRACKCFG,
 }
+
+/// Area in the REAPER window where a track might be displayed.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, BitFlags)]
+#[repr(u32)]
+pub enum TrackArea {
+    /// Track control panel.
+    Tcp = 1,
+    /// Mixer control panel.
+    Mcp = 2,
+}
+
+/// Defines how REAPER will buffer when playing previews.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, BitFlags)]
+#[repr(u32)]
+pub enum BufferingBehavior {
+    /// Buffers the source.
+    BufferSource = 1,
+    /// Treats length changes in source as vari-speed and adjusts internal state accordingly if
+    /// buffering.
+    VariSpeed = 2,
+}

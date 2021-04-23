@@ -35,12 +35,15 @@ generate-stage-two = ["quote", "syn", "proc-macro2", "phf"]
 
 [dependencies]
 c_str_macro = "1.0.2"
-vst = { git = "https://github.com/helgoboss/vst-rs", branch = "feature/custom-support-variant" }
+vst = "*"
 derive_more = "0.99.5"
 downcast-rs = "1.1.1"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 version-sync = "0.9"

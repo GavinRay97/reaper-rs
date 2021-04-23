@@ -1,13 +1,12 @@
 #![allow(non_snake_case)]
 use super::MediaTrack;
 use crate::{
-    require_non_null_panic, AutomationMode, Bpm, InputMonitoringMode, PlaybackSpeedFactor,
-    ReaperNormalizedFxParamValue, ReaperPanValue, ReaperStr, ReaperVersion, ReaperVolumeValue,
-    TrackFxChainType, TrackFxLocation, TryFromRawError,
+    require_non_null_panic, AutomationMode, Bpm, Hidden, InputMonitoringMode, Pan, PanMode,
+    PlaybackSpeedFactor, ReaperNormalizedFxParamValue, ReaperPanValue, ReaperStr, ReaperVersion,
+    ReaperVolumeValue, TrackFxChainType, TrackFxLocation,
 };
 
 use reaper_low::raw;
-use std::borrow::Cow;
 
 use std::fmt::Debug;
 use std::os::raw::c_void;
@@ -27,7 +26,11 @@ pub trait ControlSurface: Debug {
     /// Must be a simple unique string with only A-Z, 0-9, no spaces or other characters.
     ///
     /// Return `None` if this is a control surface behind the scenes.
-    fn get_type_string(&self) -> Option<Cow<'static, ReaperStr>> {
+    //
+    // We can't let this returns something owned because it would be gone as soon as the delegate
+    // control surface turns this into a pointer and returns. This method of `IReaperControlSurface`
+    // and related ones are just designed to work that way.
+    fn get_type_string(&self) -> Option<&ReaperStr> {
         None
     }
 
@@ -36,14 +39,14 @@ pub trait ControlSurface: Debug {
     /// Should be a human readable description, can include instance-specific information.
     ///
     /// Return `None` if this is a control surface behind the scenes.
-    fn get_desc_string(&self) -> Option<Cow<'static, ReaperStr>> {
+    fn get_desc_string(&self) -> Option<&ReaperStr> {
         None
     }
 
     /// Should return a string of configuration data.
     ///
     /// Return `None` if this is a control surface behind the scenes.
-    fn get_config_string(&self) -> Option<Cow<'static, ReaperStr>> {
+    fn get_config_string(&self) -> Option<&ReaperStr> {
         None
     }
 
@@ -109,6 +112,10 @@ pub trait ControlSurface: Debug {
         let _ = args;
     }
 
+    /// This is regularly queried by REAPER for touch automation mode in order to determine whether
+    /// the parameter on the given track should still write automation or not.
+    ///
+    /// The main use case are touch-sensitive motor faders.
     fn get_touch_state(&self, args: GetTouchStateArgs) -> bool {
         let _ = args;
         false
@@ -191,6 +198,28 @@ pub trait ControlSurface: Debug {
         0
     }
 
+    /// Called when the volume of a track receive has changed.
+    fn ext_set_recv_volume(&self, args: ExtSetRecvVolumeArgs) -> i32 {
+        let _ = args;
+        0
+    }
+
+    /// Called when the pan of a track receive has changed.
+    fn ext_set_recv_pan(&self, args: ExtSetRecvPanArgs) -> i32 {
+        let _ = args;
+        0
+    }
+
+    /// Called when the pan of a track has changed.
+    ///
+    /// If a control surface supports this, it should ignore [`set_surface_pan`].
+    ///
+    /// [`set_surface_pan`]: #method.set_surface_pan
+    fn ext_set_pan_ex(&self, args: ExtSetPanExArgs) -> i32 {
+        let _ = args;
+        0
+    }
+
     /// Called when a certain FX has gained focus.
     fn ext_set_focused_fx(&self, args: ExtSetFocusedFxArgs) -> i32 {
         let _ = args;
@@ -226,6 +255,26 @@ pub trait ControlSurface: Debug {
     /// Since REAPER v6.12+dev0617
     fn ext_track_fx_preset_changed(&self, args: ExtTrackFxPresetChangedArgs) -> i32 {
         let _ = args;
+        0
+    }
+
+    /// Should return `1` if [`get_touch_state()`] wants to deal with parameters other than
+    /// volume and pan (at the moment this is width only).
+    ///
+    /// [`get_touch_state()`]: #method.get_touch_state
+    fn ext_supports_extended_touch(&self, _: ExtSupportsExtendedTouchArgs) -> i32 {
+        0
+    }
+
+    /// Clear all surface state and reset (harder reset than [`set_track_list_change`]).
+    ///
+    /// [`set_track_list_change`]: #method.set_track_list_change
+    fn ext_reset(&self, _: ExtResetArgs) -> i32 {
+        0
+    }
+
+    /// Called whenever project markers are changed.
+    fn ext_set_project_marker_change(&self, _: ExtSetProjectMarkerChangeArgs) -> i32 {
         0
     }
 }
@@ -287,7 +336,31 @@ pub struct SetTrackTitleArgs<'a> {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct GetTouchStateArgs {
     pub track: MediaTrack,
-    pub is_pan: bool,
+    pub parameter_type: TouchedParameterType,
+}
+
+/// Type of a touched parameter.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum TouchedParameterType {
+    Volume,
+    Pan,
+    Width,
+    /// Represents a variant unknown to *reaper-rs*. Please contribute if you encounter a variant
+    /// that is supported by REAPER but not yet by *reaper-rs*. Thanks!
+    Unknown(Hidden<i32>),
+}
+
+impl TouchedParameterType {
+    /// Converts an integer as returned by the low-level API to a type.
+    fn from_raw(value: i32) -> TouchedParameterType {
+        use TouchedParameterType::*;
+        match value {
+            0 => Volume,
+            1 => Pan,
+            2 => Width,
+            x => Unknown(Hidden(x)),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -308,10 +381,10 @@ pub struct IsKeyDownArgs {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ExtendedArgs {
     /// Represents the type of event.
-    call: i32,
-    parm_1: *mut c_void,
-    parm_2: *mut c_void,
-    parm_3: *mut c_void,
+    pub call: i32,
+    pub parm_1: *mut c_void,
+    pub parm_2: *mut c_void,
+    pub parm_3: *mut c_void,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -338,6 +411,7 @@ pub struct ExtSetFxEnabledArgs {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct ExtSetSendVolumeArgs {
     pub track: MediaTrack,
+    /// This starts with the hardware output sends and continues with the track sends.
     pub send_index: u32,
     pub volume: ReaperVolumeValue,
 }
@@ -345,8 +419,29 @@ pub struct ExtSetSendVolumeArgs {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct ExtSetSendPanArgs {
     pub track: MediaTrack,
+    /// This starts with the hardware output sends and continues with the track sends.
     pub send_index: u32,
     pub pan: ReaperPanValue,
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct ExtSetRecvVolumeArgs {
+    pub track: MediaTrack,
+    pub receive_index: u32,
+    pub volume: ReaperVolumeValue,
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct ExtSetRecvPanArgs {
+    pub track: MediaTrack,
+    pub receive_index: u32,
+    pub pan: ReaperPanValue,
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct ExtSetPanExArgs {
+    pub track: MediaTrack,
+    pub pan: Pan,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -362,9 +457,7 @@ pub struct ExtSetLastTouchedFxArgs {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ExtSetFxOpenArgs {
     pub track: MediaTrack,
-    // It can happen that the location is not reported. Happened to me when the affected FX was
-    // floating.
-    pub fx_location: Option<VersionDependentTrackFxLocation>,
+    pub fx_location: VersionDependentTrackFxLocation,
     pub is_open: bool,
 }
 
@@ -382,41 +475,51 @@ pub struct ExtTrackFxPresetChangedArgs {
     pub fx_location: TrackFxLocation,
 }
 
+/// Just a placeholder for upward compatibility reasons.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct ExtSupportsExtendedTouchArgs;
+
+/// Just a placeholder for upward compatibility reasons.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct ExtResetArgs;
+
+/// Just a placeholder for upward compatibility reasons.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct ExtSetProjectMarkerChangeArgs;
+
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct ExtSetBpmAndPlayRateArgs {
     pub tempo: Option<Bpm>,
     pub play_rate: Option<PlaybackSpeedFactor>,
 }
 
-/// A modifier key.
+/// Modifier key according to
+/// [this list](https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes).
+///
+/// You can find some frequently used predefined keys in [`mod_keys`](mod_keys/index.html).
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub enum ModKey {
-    /// SHIFT key.
-    Shift,
-    /// CTRL key.
-    Control,
-    /// ALT key.
-    Menu,
-    /// Custom modifier key according to
-    /// [this list](https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes).
-    Custom(i32),
-}
+pub struct ModKey(pub(crate) i32);
 
 impl ModKey {
-    /// Converts an integer as returned by the low-level API to a mod key.
-    pub fn try_from_raw(value: i32) -> Result<ModKey, TryFromRawError<i32>> {
-        if value < 0 {
-            return Err(TryFromRawError::new("couldn't convert to mod key", value));
-        };
-        use ModKey::*;
-        let key = match value as u32 {
-            raw::VK_SHIFT => Shift,
-            raw::VK_CONTROL => Control,
-            raw::VK_MENU => Menu,
-            _ => Custom(value),
-        };
-        Ok(key)
+    /// Creates a modifier key.
+    pub const fn new(raw: i32) -> Self {
+        Self(raw)
     }
+
+    /// Returns the wrapped value.
+    pub const fn get(self) -> i32 {
+        self.0
+    }
+}
+
+/// Contains predefined modifier keys.
+pub mod mod_keys {
+    use crate::ModKey;
+    use reaper_low::raw;
+
+    pub const SHIFT: ModKey = ModKey(raw::VK_SHIFT as _);
+    pub const CONTROL: ModKey = ModKey(raw::VK_CONTROL as _);
+    pub const MENU: ModKey = ModKey(raw::VK_MENU as _);
 }
 
 /// Location of a track or take FX including the parent track.
@@ -458,20 +561,29 @@ pub enum VersionDependentTrackFxLocation {
 }
 
 #[derive(Debug)]
-pub(crate) struct DelegatingControlSurface {
+pub(crate) struct ControlSurfaceAdapter {
+    // As you can see, this is a `Box` instead of a generic type parameter! Reasoning:
+    //
+    // - `ReaperSession` needs to store control surface instances of consumer-defined unknown types
+    //   in one list. This requires boxing already.
+    // - The way we work with consumer-provided control surfaces is to give ownership to REAPER and
+    //   get it back at some point while being able to restore the original.
+    //
+    // Because control surface calls happen in the main thread, the dynamic dispatch this
+    // is absolutely no issue.
     delegate: Box<dyn ControlSurface>,
     // Capabilities depending on REAPER version
     supports_detection_of_input_fx: bool,
     supports_detection_of_input_fx_in_set_fx_change: bool,
 }
 
-impl DelegatingControlSurface {
+impl ControlSurfaceAdapter {
     pub fn new(
         delegate: Box<dyn ControlSurface>,
         reaper_version: &ReaperVersion,
-    ) -> DelegatingControlSurface {
+    ) -> ControlSurfaceAdapter {
         let reaper_version_5_95: ReaperVersion = ReaperVersion::new("5.95");
-        DelegatingControlSurface {
+        ControlSurfaceAdapter {
             delegate,
             // since pre1,
             supports_detection_of_input_fx: reaper_version >= &reaper_version_5_95,
@@ -497,8 +609,7 @@ impl DelegatingControlSurface {
             track: require_non_null_panic(media_track_ptr as *mut raw::MediaTrack),
             fx_location: if media_item_ptr.is_null() {
                 VersionDependentFxLocation::TrackFx(
-                    self.get_as_version_dependent_track_fx_ref(fx_index_ptr)
-                        .expect("weird FX index"),
+                    self.get_as_version_dependent_track_fx_ref(fx_index_ptr),
                 )
             } else {
                 VersionDependentFxLocation::TakeFx {
@@ -514,18 +625,17 @@ impl DelegatingControlSurface {
     unsafe fn get_as_version_dependent_track_fx_ref(
         &self,
         ptr: *mut c_void,
-    ) -> Result<VersionDependentTrackFxLocation, TryFromRawError<i32>> {
+    ) -> VersionDependentTrackFxLocation {
         let fx_index = deref_as::<i32>(ptr).expect("FX index is null");
-        let location = if self.supports_detection_of_input_fx {
-            VersionDependentTrackFxLocation::New(TrackFxLocation::try_from_raw(fx_index)?)
+        if self.supports_detection_of_input_fx {
+            VersionDependentTrackFxLocation::New(TrackFxLocation::from_raw(fx_index))
         } else {
             VersionDependentTrackFxLocation::Old(fx_index as u32)
-        };
-        Ok(location)
+        }
     }
 }
 
-impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
+impl reaper_low::IReaperControlSurface for ControlSurfaceAdapter {
     fn GetTypeString(&self) -> *const i8 {
         self.delegate
             .get_type_string()
@@ -624,13 +734,13 @@ impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
     fn GetTouchState(&self, trackid: *mut raw::MediaTrack, isPan: i32) -> bool {
         self.delegate.get_touch_state(GetTouchStateArgs {
             track: require_non_null_panic(trackid),
-            is_pan: isPan != 0,
+            parameter_type: TouchedParameterType::from_raw(isPan),
         })
     }
 
     fn SetAutoMode(&self, mode: i32) {
         self.delegate.set_auto_mode(SetAutoModeArgs {
-            mode: AutomationMode::try_from_raw(mode).expect("unknown automation mode"),
+            mode: AutomationMode::from_raw(mode),
         })
     }
 
@@ -645,9 +755,8 @@ impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
     }
 
     fn IsKeyDown(&self, key: i32) -> bool {
-        self.delegate.is_key_down(IsKeyDownArgs {
-            key: ModKey::try_from_raw(key).expect("unknown key code"),
-        })
+        self.delegate
+            .is_key_down(IsKeyDownArgs { key: ModKey(key) })
     }
 
     fn Extended(
@@ -664,8 +773,7 @@ impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
                     let recmon: i32 = deref_as(parm2).expect("recmon pointer is null");
                     self.delegate.ext_set_input_monitor(ExtSetInputMonitorArgs {
                         track: require_non_null_panic(parm1 as *mut raw::MediaTrack),
-                        mode: InputMonitoringMode::try_from_raw(recmon)
-                            .expect("unknown input monitoring mode"),
+                        mode: InputMonitoringMode::from_raw(recmon),
                     })
                 }
                 raw::CSURF_EXT_SETFXPARAM | raw::CSURF_EXT_SETFXPARAM_RECFX => {
@@ -702,7 +810,7 @@ impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
                 }
                 raw::CSURF_EXT_SETFXOPEN => self.delegate.ext_set_fx_open(ExtSetFxOpenArgs {
                     track: require_non_null_panic(parm1 as *mut raw::MediaTrack),
-                    fx_location: self.get_as_version_dependent_track_fx_ref(parm2).ok(),
+                    fx_location: self.get_as_version_dependent_track_fx_ref(parm2),
                     is_open: interpret_as_bool(parm3),
                 }),
                 raw::CSURF_EXT_SETFXENABLED => {
@@ -712,9 +820,7 @@ impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
                     } else {
                         self.delegate.ext_set_fx_enabled(ExtSetFxEnabledArgs {
                             track: require_non_null_panic(parm1 as *mut raw::MediaTrack),
-                            fx_location: self
-                                .get_as_version_dependent_track_fx_ref(parm2)
-                                .expect("weird FX index"),
+                            fx_location: self.get_as_version_dependent_track_fx_ref(parm2),
                             is_enabled: interpret_as_bool(parm3),
                         })
                     }
@@ -732,6 +838,49 @@ impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
                     send_index: deref_as::<i32>(parm2).expect("send index pointer is null") as u32,
                     pan: deref_as(parm3).expect("pan pointer is null"),
                 }),
+                raw::CSURF_EXT_SETRECVVOLUME => {
+                    self.delegate.ext_set_recv_volume(ExtSetRecvVolumeArgs {
+                        track: require_non_null_panic(parm1 as *mut raw::MediaTrack),
+                        receive_index: deref_as::<i32>(parm2)
+                            .expect("receive index pointer is null")
+                            as u32,
+                        volume: deref_as(parm3).expect("volume pointer is null"),
+                    })
+                }
+                raw::CSURF_EXT_SETRECVPAN => self.delegate.ext_set_recv_pan(ExtSetRecvPanArgs {
+                    track: require_non_null_panic(parm1 as *mut raw::MediaTrack),
+                    receive_index: deref_as::<i32>(parm2).expect("receive index pointer is null")
+                        as u32,
+                    pan: deref_as(parm3).expect("pan pointer is null"),
+                }),
+                raw::CSURF_EXT_SETPAN_EX => {
+                    let mode: i32 = deref_as(parm3).expect("pan mode pointer is null");
+                    use PanMode::*;
+                    let pan_null_msg = "pan pointer is null";
+                    let pan = match PanMode::from_raw(mode) {
+                        BalanceV1 => Pan::BalanceV1(deref_as(parm2).expect(pan_null_msg)),
+                        BalanceV4 => Pan::BalanceV4(deref_as(parm2).expect(pan_null_msg)),
+                        StereoPan => Pan::StereoPan {
+                            pan: deref_as(parm2).expect(pan_null_msg),
+                            width: {
+                                let next = (parm2 as *const f64).offset(1);
+                                deref_as(next as _).expect("width is null")
+                            },
+                        },
+                        DualPan => Pan::DualPan {
+                            left: deref_as(parm2).expect("left pan is null"),
+                            right: {
+                                let next = (parm2 as *const f64).offset(1);
+                                deref_as(next as _).expect("right pan is null")
+                            },
+                        },
+                        Unknown(x) => Pan::Unknown(x),
+                    };
+                    self.delegate.ext_set_pan_ex(ExtSetPanExArgs {
+                        track: require_non_null_panic(parm1 as *mut raw::MediaTrack),
+                        pan,
+                    })
+                }
                 raw::CSURF_EXT_SETFXCHANGE => self.delegate.ext_set_fx_change(ExtSetFxChangeArgs {
                     track: require_non_null_panic(parm1 as *mut raw::MediaTrack),
                     fx_chain_type: {
@@ -759,9 +908,16 @@ impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
                     self.delegate
                         .ext_track_fx_preset_changed(ExtTrackFxPresetChangedArgs {
                             track: require_non_null_panic(parm1 as *mut raw::MediaTrack),
-                            fx_location: get_as_track_fx_location(parm2).expect("invalid FX index"),
+                            fx_location: get_as_track_fx_location(parm2),
                         })
                 }
+                raw::CSURF_EXT_SUPPORTS_EXTENDED_TOUCH => self
+                    .delegate
+                    .ext_supports_extended_touch(ExtSupportsExtendedTouchArgs),
+                raw::CSURF_EXT_RESET => self.delegate.ext_reset(ExtResetArgs),
+                raw::CSURF_EXT_SETPROJECTMARKERCHANGE => self
+                    .delegate
+                    .ext_set_project_marker_change(ExtSetProjectMarkerChangeArgs),
                 _ => 0,
             }
         };
@@ -780,11 +936,11 @@ impl reaper_low::IReaperControlSurface for DelegatingControlSurface {
     }
 }
 
-unsafe fn deref_as<T: Copy>(ptr: *mut c_void) -> Option<T> {
+unsafe fn deref_as<T: Copy>(ptr: *const c_void) -> Option<T> {
     if ptr.is_null() {
         return None;
     }
-    let ptr = ptr as *mut T;
+    let ptr = ptr as *const T;
     Some(*ptr)
 }
 
@@ -792,9 +948,7 @@ unsafe fn interpret_as_bool(ptr: *mut c_void) -> bool {
     !ptr.is_null()
 }
 
-unsafe fn get_as_track_fx_location(
-    ptr: *mut c_void,
-) -> Result<TrackFxLocation, TryFromRawError<i32>> {
+unsafe fn get_as_track_fx_location(ptr: *mut c_void) -> TrackFxLocation {
     let fx_index = deref_as::<i32>(ptr).expect("FX index is null");
-    TrackFxLocation::try_from_raw(fx_index)
+    TrackFxLocation::from_raw(fx_index)
 }

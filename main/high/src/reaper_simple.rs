@@ -98,6 +98,7 @@ impl Reaper {
                         })
                         .next()
                 }
+                Unknown(_) => None,
             }
         })
     }
@@ -142,6 +143,14 @@ impl Reaper {
         self.medium_reaper().get_global_automation_override()
     }
 
+    pub fn set_global_automation_override(
+        &self,
+        mode_override: Option<GlobalAutomationModeOverride>,
+    ) {
+        self.medium_reaper()
+            .set_global_automation_override(mode_override);
+    }
+
     pub fn generate_guid(&self) -> Guid {
         Guid::new(Reaper::get().medium_reaper().gen_guid())
     }
@@ -162,12 +171,16 @@ impl Reaper {
         MidiOutputDevice::new(id)
     }
 
-    pub fn midi_input_devices(&self) -> impl Iterator<Item = MidiInputDevice> + '_ {
+    pub fn midi_input_devices(
+        &self,
+    ) -> impl Iterator<Item = MidiInputDevice> + ExactSizeIterator + '_ {
         (0..self.medium_reaper().get_max_midi_inputs())
             .map(move |i| self.midi_input_device_by_id(MidiInputDeviceId::new(i as u8)))
     }
 
-    pub fn midi_output_devices(&self) -> impl Iterator<Item = MidiOutputDevice> + '_ {
+    pub fn midi_output_devices(
+        &self,
+    ) -> impl Iterator<Item = MidiOutputDevice> + ExactSizeIterator + '_ {
         (0..self.medium_reaper().get_max_midi_outputs())
             .map(move |i| self.midi_output_device_by_id(MidiOutputDeviceId::new(i as u8)))
     }
@@ -257,5 +270,9 @@ impl Reaper {
             return;
         }
         self.medium_reaper().csurf_on_record();
+    }
+
+    pub fn audio_is_running(&self) -> bool {
+        self.medium_reaper().audio_is_running()
     }
 }
